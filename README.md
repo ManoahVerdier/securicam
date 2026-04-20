@@ -27,7 +27,7 @@ Angular (lecteur live WebRTC + contrôles capture)
 
 ### Stack
 - Kotlin + Android natif
-- CameraX (API 21+)
+- CameraX (support API 21+, cible recommandée API 26+)
 - Foreground Service (`foregroundServiceType="camera"`)
 - WebRTC (`org.webrtc:google-webrtc`)
 - OkHttp (signalisation)
@@ -52,7 +52,7 @@ Angular (lecteur live WebRTC + contrôles capture)
 ## 2) Backend Laravel (signalisation + API)
 
 ### Stack
-- Laravel
+- Laravel 11.x
 - Laravel Reverb (WebSockets)
 - Broadcast events pour offer/answer/ICE
 - API REST sécurisée via Sanctum
