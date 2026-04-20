@@ -1,0 +1,30 @@
+<div class="capture-controls" [class.disabled]="!isOnline">
+  <button
+    class="btn btn-photo"
+    (click)="capturePhoto()"
+    [disabled]="!isOnline || isCapturingPhoto"
+    title="Capturer une photo"
+  >
+    <span class="icon">📷</span>
+    <span class="label" *ngIf="!isCapturingPhoto">Photo</span>
+    <span class="label" *ngIf="isCapturingPhoto">Capture...</span>
+  </button>
+
+  <button
+    class="btn btn-record"
+    [class.recording]="isRecording"
+    (click)="toggleRecording()"
+    [disabled]="!isOnline || isTogglingRecord"
+    title="{{ isRecording ? 'Arrêter l\'enregistrement' : 'Démarrer l\'enregistrement' }}"
+  >
+    <span class="icon" *ngIf="!isRecording">⏺️</span>
+    <span class="icon" *ngIf="isRecording">⏹️</span>
+    <span class="label" *ngIf="!isTogglingRecord && !isRecording">Enregistrer</span>
+    <span class="label" *ngIf="!isTogglingRecord && isRecording">Arrêter</span>
+    <span class="label" *ngIf="isTogglingRecord">...</span>
+  </button>
+
+  <div class="status-message" *ngIf="!isOnline">
+    Caméra hors ligne
+  </div>
+</div>

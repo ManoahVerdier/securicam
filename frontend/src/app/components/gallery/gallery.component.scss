@@ -1,0 +1,200 @@
+.gallery {
+  padding: 16px;
+  background: #1a1a2e;
+  border-radius: 8px;
+
+  h3 {
+    margin: 0 0 16px;
+    color: #fff;
+    font-size: 18px;
+  }
+
+  .loading, .error, .empty {
+    text-align: center;
+    padding: 40px;
+    color: #888;
+
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid rgba(255, 255, 255, 0.2);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 12px;
+    }
+
+    button {
+      margin-top: 12px;
+      padding: 8px 20px;
+      background: #4a90d9;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+
+      &:hover {
+        background: #357abd;
+      }
+    }
+  }
+
+  .captures-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 12px;
+  }
+
+  .capture-item {
+    position: relative;
+    background: #2d2d44;
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: transform 0.2s;
+
+    &:hover {
+      transform: scale(1.02);
+
+      .delete-btn {
+        opacity: 1;
+      }
+    }
+
+    .thumbnail {
+      aspect-ratio: 16 / 9;
+      position: relative;
+      background: #1a1a2e;
+
+      img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .placeholder {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        font-size: 32px;
+      }
+
+      .badge {
+        position: absolute;
+        bottom: 4px;
+        right: 4px;
+        padding: 2px 6px;
+        background: rgba(0, 0, 0, 0.7);
+        color: #fff;
+        font-size: 11px;
+        border-radius: 4px;
+
+        &.video {
+          background: rgba(244, 67, 54, 0.8);
+        }
+      }
+    }
+
+    .info {
+      padding: 8px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: #888;
+    }
+
+    .delete-btn {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      width: 28px;
+      height: 28px;
+      background: rgba(0, 0, 0, 0.6);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.2s;
+
+      &:hover {
+        background: rgba(244, 67, 54, 0.8);
+      }
+    }
+  }
+
+  .load-more {
+    display: block;
+    width: 100%;
+    margin-top: 16px;
+    padding: 12px;
+    background: #2d2d44;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+
+    &:hover {
+      background: #3d3d5c;
+    }
+  }
+
+  .viewer-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+
+    .viewer-content {
+      position: relative;
+      max-width: 90vw;
+      max-height: 90vh;
+
+      img, video {
+        max-width: 100%;
+        max-height: 80vh;
+        border-radius: 8px;
+      }
+
+      .close-btn {
+        position: absolute;
+        top: -40px;
+        right: 0;
+        width: 32px;
+        height: 32px;
+        background: #fff;
+        border: none;
+        border-radius: 50%;
+        font-size: 16px;
+        cursor: pointer;
+
+        &:hover {
+          background: #ddd;
+        }
+      }
+
+      .viewer-info {
+        margin-top: 12px;
+        text-align: center;
+        color: #888;
+        font-size: 13px;
+
+        p {
+          margin: 4px 0;
+        }
+      }
+    }
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Securicam</string>
+    
+    <!-- Status -->
+    <string name="status_streaming">Streaming</string>
+    <string name="status_stopped">Stopped</string>
+    <string name="status_connecting">Connecting…</string>
+    
+    <!-- Configuration -->
+    <string name="configuration">Configuration</string>
+    <string name="server_url">Server URL</string>
+    <string name="auth_token">Auth Token</string>
+    <string name="camera_id">Camera ID</string>
+    <string name="save_configuration">Save Configuration</string>
+    
+    <!-- Auto-start -->
+    <string name="auto_start_title">Auto-start on boot</string>
+    <string name="auto_start_description">Automatically start streaming when device boots</string>
+    
+    <!-- Buttons -->
+    <string name="start_streaming">Start Streaming</string>
+    <string name="stop_streaming">Stop Streaming</string>
+    <string name="battery_settings">Battery Optimization Settings</string>
+    
+    <!-- Battery Optimization -->
+    <string name="battery_optimization_title">Battery Optimization</string>
+    <string name="battery_optimization_message">To ensure reliable camera streaming, please disable battery optimization for this app. This prevents Android from killing the camera service in the background.</string>
+    <string name="open_settings">Open Settings</string>
+    <string name="later">Later</string>
+    
+    <!-- Notifications -->
+    <string name="notification_title">Securicam Active</string>
+    <string name="notification_text">Camera is streaming…</string>
+</resources>
