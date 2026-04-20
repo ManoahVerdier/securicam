@@ -1,0 +1,30 @@
+<div class="camera-viewer">
+  <div class="video-container">
+    <video
+      #videoElement
+      autoplay
+      playsinline
+      muted
+      [class.hidden]="isLoading || hasError"
+    ></video>
+
+    <div class="overlay" *ngIf="isLoading || hasError">
+      <div class="loader" *ngIf="isLoading">
+        <div class="spinner"></div>
+        <p>Connexion à la caméra...</p>
+      </div>
+
+      <div class="error" *ngIf="hasError">
+        <span class="error-icon">⚠️</span>
+        <p>{{ errorMessage }}</p>
+        <button (click)="reconnect()">Réessayer</button>
+      </div>
+    </div>
+
+    <div class="status-bar" [class]="statusClass">
+      <span class="status-indicator"></span>
+      <span class="status-text">{{ statusText }}</span>
+      <span class="camera-name">{{ camera.name }}</span>
+    </div>
+  </div>
+</div>

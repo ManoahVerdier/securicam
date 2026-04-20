@@ -1,0 +1,43 @@
+<div class="login-container">
+  <div class="login-card">
+    <div class="logo">
+      <span class="icon">📷</span>
+      <h1>Securicam</h1>
+    </div>
+
+    <form (ngSubmit)="login()">
+      <div class="form-group">
+        <label for="email">Email</label>
+        <input
+          type="email"
+          id="email"
+          [(ngModel)]="credentials.email"
+          name="email"
+          placeholder="votre@email.com"
+          autocomplete="email"
+        />
+      </div>
+
+      <div class="form-group">
+        <label for="password">Mot de passe</label>
+        <input
+          type="password"
+          id="password"
+          [(ngModel)]="credentials.password"
+          name="password"
+          placeholder="••••••••"
+          autocomplete="current-password"
+        />
+      </div>
+
+      <div class="error-message" *ngIf="errorMessage">
+        {{ errorMessage }}
+      </div>
+
+      <button type="submit" [disabled]="isLoading">
+        <span *ngIf="!isLoading">Se connecter</span>
+        <span *ngIf="isLoading">Connexion...</span>
+      </button>
+    </form>
+  </div>
+</div>

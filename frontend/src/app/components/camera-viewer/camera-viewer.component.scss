@@ -1,0 +1,157 @@
+.camera-viewer {
+  width: 100%;
+  height: 100%;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+
+  .video-container {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-height: 300px;
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #111;
+
+      &.hidden {
+        visibility: hidden;
+      }
+    }
+
+    .overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.8);
+
+      .loader {
+        text-align: center;
+        color: #fff;
+
+        .spinner {
+          width: 40px;
+          height: 40px;
+          border: 3px solid rgba(255, 255, 255, 0.3);
+          border-top-color: #fff;
+          border-radius: 50%;
+          animation: spin 1s linear infinite;
+          margin: 0 auto 16px;
+        }
+
+        p {
+          margin: 0;
+          font-size: 14px;
+        }
+      }
+
+      .error {
+        text-align: center;
+        color: #fff;
+
+        .error-icon {
+          font-size: 48px;
+          display: block;
+          margin-bottom: 16px;
+        }
+
+        p {
+          margin: 0 0 16px;
+          color: #ff6b6b;
+        }
+
+        button {
+          padding: 8px 24px;
+          background: #4a90d9;
+          color: #fff;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 14px;
+
+          &:hover {
+            background: #357abd;
+          }
+        }
+      }
+    }
+
+    .status-bar {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: rgba(0, 0, 0, 0.6);
+      border-radius: 4px;
+      color: #fff;
+      font-size: 13px;
+
+      .status-indicator {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #888;
+      }
+
+      &.live .status-indicator,
+      &.online .status-indicator {
+        background: #4caf50;
+      }
+
+      &.recording .status-indicator {
+        background: #f44336;
+        animation: pulse 1s ease-in-out infinite;
+      }
+
+      &.loading .status-indicator {
+        background: #ff9800;
+        animation: pulse 1s ease-in-out infinite;
+      }
+
+      &.error .status-indicator {
+        background: #f44336;
+      }
+
+      &.offline .status-indicator {
+        background: #9e9e9e;
+      }
+
+      .status-text {
+        flex: 1;
+        font-weight: 500;
+      }
+
+      .camera-name {
+        color: rgba(255, 255, 255, 0.7);
+      }
+    }
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}

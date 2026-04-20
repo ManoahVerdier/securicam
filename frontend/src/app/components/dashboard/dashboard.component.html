@@ -1,0 +1,64 @@
+<div class="dashboard">
+  <header class="header">
+    <div class="logo">
+      <span class="icon">📷</span>
+      <h1>Securicam</h1>
+    </div>
+    <div class="user-info">
+      <span class="username">{{ userName }}</span>
+      <button class="logout-btn" (click)="logout()">Déconnexion</button>
+    </div>
+  </header>
+
+  <div class="error-banner" *ngIf="error">
+    {{ error }}
+    <button (click)="error = ''">✕</button>
+  </div>
+
+  <div class="content">
+    <aside class="sidebar">
+      <h2>Mes caméras</h2>
+
+      <div class="loading" *ngIf="isLoading">
+        <div class="spinner"></div>
+      </div>
+
+      <ul class="camera-list" *ngIf="!isLoading">
+        <li
+          *ngFor="let camera of cameras"
+          [class.selected]="selectedCamera?.id === camera.id"
+          [class.online]="camera.status !== 'offline'"
+          [class.recording]="camera.status === 'recording'"
+          (click)="selectCamera(camera)"
+        >
+          <span class="status-dot"></span>
+          <span class="name">{{ camera.name }}</span>
+          <span class="status-badge" *ngIf="camera.status === 'recording'">REC</span>
+        </li>
+      </ul>
+
+      <div class="empty" *ngIf="!isLoading && cameras.length === 0">
+        <p>Aucune caméra configurée</p>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <div class="no-camera" *ngIf="!selectedCamera">
+        <span class="icon">📷</span>
+        <p>Sélectionnez une caméra pour voir le flux en direct</p>
+      </div>
+
+      <div class="camera-view" *ngIf="selectedCamera">
+        <app-camera-viewer [camera]="selectedCamera"></app-camera-viewer>
+
+        <app-capture-controls
+          [camera]="selectedCamera"
+          (statusChanged)="onCameraStatusChanged($event)"
+          (error)="onError($event)"
+        ></app-capture-controls>
+
+        <app-gallery [camera]="selectedCamera"></app-gallery>
+      </div>
+    </main>
+  </div>
+</div>
