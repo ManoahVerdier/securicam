@@ -117,3 +117,55 @@ Angular (lecteur live WebRTC + contrôles capture)
 ## 7) État actuel du dépôt
 
 Ce dépôt sert actuellement de **spécification d’architecture et de cadrage technique** pour implémenter la solution complète Android + Laravel + Angular décrite ci-dessus.
+
+---
+
+## 8) Démarrage rapide
+
+### Lancer l'environnement de développement
+
+```bash
+# Cloner le dépôt
+git clone https://github.com/ManoahVerdier/securicam.git
+cd securicam
+
+# Lancer avec Docker
+docker-compose up -d
+
+# Initialiser la base de données
+docker-compose exec backend php artisan migrate
+```
+
+### Accès aux services
+
+- **Frontend Angular** : http://localhost:4200
+- **API Laravel** : http://localhost:8000
+- **WebSocket Reverb** : ws://localhost:8080
+
+### Compiler l'application Android
+
+```bash
+cd android
+./gradlew assembleDebug
+```
+
+---
+
+## 9) Structure du projet
+
+```
+securicam/
+├── android/          # Application Android (Kotlin)
+├── backend/          # API Laravel 11.x
+├── frontend/         # Frontend Angular 17+
+├── docker/           # Configuration Docker
+├── docs/             # Documentation
+└── docker-compose.yml
+```
+
+---
+
+## 10) Documentation
+
+- [Guide d'exemption batterie](docs/BATTERY_OPTIMIZATION.md) - Configuration par fabricant
+- [Guide de déploiement](docs/DEPLOYMENT.md) - Production avec Docker/Cloudflare
