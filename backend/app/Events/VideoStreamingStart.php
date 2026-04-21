@@ -28,7 +28,7 @@ class VideoStreamingStart implements ShouldBroadcast
         return [
             'camera_id' => $this->cameraId,
             'action' => 'start_streaming',
-            'timestamp' => now()->toIso8601String(),
+            'timestamp' => now()->toIso8601ZuluString(),
         ];
     }
 

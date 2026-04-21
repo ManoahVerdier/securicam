@@ -132,7 +132,13 @@ class CameraService : LifecycleService() {
 
         return NotificationCompat.Builder(this, SecuricamApp.NOTIFICATION_CHANNEL_ID)
             .setContentTitle("Securicam")
-            .setContentText(if (isStreaming) "Camera is streaming..." else "Camera is ready to stream")
+            .setContentText(
+                when {
+                    isStreaming -> "Camera is streaming..."
+                    isStreamStarting -> "Camera is starting stream..."
+                    else -> "Camera is ready to stream"
+                }
+            )
             .setSmallIcon(R.drawable.ic_camera)
             .setContentIntent(pendingIntent)
             .addAction(R.drawable.ic_stop, "Stop", stopIntent)
@@ -149,7 +155,12 @@ class CameraService : LifecycleService() {
     }
 
     private fun connectSignalingIfNeeded() {
-        if (signalingClient != null || serverUrl.isEmpty() || authToken.isEmpty() || cameraId == 0) {
+        if (signalingClient != null) {
+            return
+        }
+
+        if (serverUrl.isEmpty() || authToken.isEmpty() || cameraId == 0) {
+            Log.w(TAG, "Cannot connect signaling: missing configuration")
             return
         }
 
