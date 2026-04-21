@@ -9,7 +9,9 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
@@ -35,6 +37,17 @@ class MainActivity : AppCompatActivity() {
     
     private var cameraService: CameraService? = null
     private var isServiceBound = false
+    private var isStartRequested = false
+    private var startRequestedAtMillis: Long = 0L
+    private val uiHandler = Handler(Looper.getMainLooper())
+    private val uiRefreshRunnable = object : Runnable {
+        override fun run() {
+            if (isServiceBound) {
+                updateUI()
+                uiHandler.postDelayed(this, 500)
+            }
+        }
+    }
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -79,10 +92,12 @@ class MainActivity : AppCompatActivity() {
             serviceConnection,
             Context.BIND_AUTO_CREATE
         )
+        startUiRefresh()
     }
 
     override fun onStop() {
         super.onStop()
+        stopUiRefresh()
         if (isServiceBound) {
             unbindService(serviceConnection)
             isServiceBound = false
@@ -177,6 +192,9 @@ class MainActivity : AppCompatActivity() {
             startService(intent)
         }
 
+        isStartRequested = true
+        startRequestedAtMillis = System.currentTimeMillis()
+        updateUI()
         Toast.makeText(this, "Starting camera stream...", Toast.LENGTH_SHORT).show()
     }
 
@@ -185,13 +203,23 @@ class MainActivity : AppCompatActivity() {
             action = CameraService.ACTION_STOP
         }
         startService(intent)
+        isStartRequested = false
+        startRequestedAtMillis = 0L
+        updateUI()
         Toast.makeText(this, "Stopping camera stream...", Toast.LENGTH_SHORT).show()
     }
 
     private fun updateUI() {
         val isStreaming = cameraService?.isStreaming == true
+        if (isStartRequested && !isStreaming && System.currentTimeMillis() - startRequestedAtMillis > 15000) {
+            isStartRequested = false
+            startRequestedAtMillis = 0L
+        } else if (isStreaming) {
+            startRequestedAtMillis = 0L
+        }
+        val shouldShowStop = isStreaming || isStartRequested
         
-        binding.btnStartStop.text = if (isStreaming) {
+        binding.btnStartStop.text = if (shouldShowStop) {
             getString(R.string.stop_streaming)
         } else {
             getString(R.string.start_streaming)
@@ -203,14 +231,25 @@ class MainActivity : AppCompatActivity() {
 
         binding.tvStatus.text = if (isStreaming) {
             getString(R.string.status_streaming)
+        } else if (isStartRequested) {
+            getString(R.string.status_connecting)
         } else {
             getString(R.string.status_stopped)
         }
 
         // Disable config editing while streaming
-        binding.etServerUrl.isEnabled = !isStreaming
-        binding.etAuthToken.isEnabled = !isStreaming
-        binding.etCameraId.isEnabled = !isStreaming
+        binding.etServerUrl.isEnabled = !shouldShowStop
+        binding.etAuthToken.isEnabled = !shouldShowStop
+        binding.etCameraId.isEnabled = !shouldShowStop
+    }
+
+    private fun startUiRefresh() {
+        uiHandler.removeCallbacks(uiRefreshRunnable)
+        uiHandler.post(uiRefreshRunnable)
+    }
+
+    private fun stopUiRefresh() {
+        uiHandler.removeCallbacks(uiRefreshRunnable)
     }
 
     private fun checkBatteryOptimization() {
