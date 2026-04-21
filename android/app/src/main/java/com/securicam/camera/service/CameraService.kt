@@ -166,7 +166,9 @@ class CameraService : LifecycleService() {
 
         signalingClient = SignalingClient(serverUrl, authToken, cameraId).also { client ->
             client.connect(
-                onOffer = { _ -> },
+                onOffer = { _ ->
+                    // Viewer answers camera offers in this flow, so incoming offers are ignored.
+                },
                 onAnswer = { sdp ->
                     webRtcClient?.handleAnswer(sdp)
                 },

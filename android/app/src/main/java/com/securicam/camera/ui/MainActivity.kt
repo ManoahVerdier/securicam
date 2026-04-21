@@ -31,6 +31,8 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_AUTH_TOKEN = "auth_token"
         private const val KEY_CAMERA_ID = "camera_id"
         private const val KEY_AUTO_START = "auto_start_enabled"
+        private const val UI_REFRESH_INTERVAL_MS = 500L
+        private const val STREAM_START_TIMEOUT_MS = 15000L
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -44,7 +46,7 @@ class MainActivity : AppCompatActivity() {
         override fun run() {
             if (isServiceBound) {
                 updateUI()
-                uiHandler.postDelayed(this, 500)
+                uiHandler.postDelayed(this, UI_REFRESH_INTERVAL_MS)
             }
         }
     }
@@ -211,7 +213,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateUI() {
         val isStreaming = cameraService?.isStreaming == true
-        if (isStartRequested && !isStreaming && System.currentTimeMillis() - startRequestedAtMillis > 15000) {
+        if (isStartRequested && !isStreaming && System.currentTimeMillis() - startRequestedAtMillis > STREAM_START_TIMEOUT_MS) {
             isStartRequested = false
             startRequestedAtMillis = 0L
         } else if (isStreaming) {
