@@ -20,6 +20,7 @@ cd securicam
 ```bash
 cd backend
 cp .env.example .env
+composer install
 # Générer une clé d'application
 php artisan key:generate
 ```
