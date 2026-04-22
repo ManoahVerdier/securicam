@@ -8,6 +8,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.webrtc.IceCandidate
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -25,6 +26,7 @@ class SignalingClient(
 
     private val gson = Gson()
     private var webSocket: WebSocket? = null
+    private val normalizedServerUrl: String? = normalizeServerUrl(serverUrl)
     
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -49,8 +51,9 @@ class SignalingClient(
         onStartStreaming: () -> Unit,
         onStopStreaming: () -> Unit,
         onStartRecording: () -> Unit,
-        onStopRecording: () -> Unit
-    ) {
+        onStopRecording: () -> Unit,
+        onError: (String) -> Unit = {}
+    ): Boolean {
         onOfferCallback = onOffer
         onAnswerCallback = onAnswer
         onIceCandidateCallback = onIceCandidate
@@ -60,15 +63,25 @@ class SignalingClient(
         onStartRecordingCallback = onStartRecording
         onStopRecordingCallback = onStopRecording
 
-        val wsUrl = serverUrl
-            .replace("http://", "ws://")
-            .replace("https://", "wss://")
-            .replace("/api", "") + "/app/securicam-app-key"
+        val wsUrl = buildWebSocketUrl()
+        if (wsUrl == null) {
+            val errorMessage = "Cannot connect signaling: invalid server URL '$serverUrl'"
+            Log.e(TAG, errorMessage)
+            onError(errorMessage)
+            return false
+        }
 
-        val request = Request.Builder()
-            .url(wsUrl)
-            .addHeader("Authorization", "Bearer $authToken")
-            .build()
+        val request = try {
+            Request.Builder()
+                .url(wsUrl)
+                .addHeader("Authorization", "Bearer $authToken")
+                .build()
+        } catch (e: IllegalArgumentException) {
+            val errorMessage = "Cannot connect signaling: invalid WebSocket URL '$wsUrl'"
+            Log.e(TAG, errorMessage, e)
+            onError(errorMessage)
+            return false
+        }
 
         webSocket = httpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -93,6 +106,7 @@ class SignalingClient(
                 Log.e(TAG, "WebSocket error", t)
             }
         })
+        return true
     }
 
     private fun subscribeToChannel() {
@@ -149,8 +163,9 @@ class SignalingClient(
             addProperty("sdp", sdp)
             addProperty("type", "offer")
         }
-        
-        makeRequest("$serverUrl/webrtc/offer", body)
+
+        val url = buildApiUrl("/webrtc/offer") ?: return@withContext false
+        makeRequest(url, body)
     }
 
     suspend fun sendAnswer(sdp: String) = withContext(Dispatchers.IO) {
@@ -159,8 +174,9 @@ class SignalingClient(
             addProperty("sdp", sdp)
             addProperty("type", "answer")
         }
-        
-        makeRequest("$serverUrl/webrtc/answer", body)
+
+        val url = buildApiUrl("/webrtc/answer") ?: return@withContext false
+        makeRequest(url, body)
     }
 
     suspend fun sendIceCandidate(candidate: IceCandidate) = withContext(Dispatchers.IO) {
@@ -172,16 +188,18 @@ class SignalingClient(
                 addProperty("sdpMLineIndex", candidate.sdpMLineIndex)
             })
         }
-        
-        makeRequest("$serverUrl/webrtc/ice-candidate", body)
+
+        val url = buildApiUrl("/webrtc/ice-candidate") ?: return@withContext false
+        makeRequest(url, body)
     }
 
     suspend fun updateCameraStatus(status: String) = withContext(Dispatchers.IO) {
         val body = JsonObject().apply {
             addProperty("status", status)
         }
-        
-        makeRequest("$serverUrl/cameras/$cameraId/status", body, "PATCH")
+
+        val url = buildApiUrl("/cameras/$cameraId/status") ?: return@withContext false
+        makeRequest(url, body, "PATCH")
     }
 
     private fun makeRequest(url: String, body: JsonObject, method: String = "POST"): Boolean {
@@ -201,10 +219,56 @@ class SignalingClient(
                     Log.e(TAG, "Request failed: ${response.code} - ${response.body?.string()}")
                 }
             }
+        } catch (e: IllegalArgumentException) {
+            Log.e(TAG, "Invalid request URL: $url", e)
+            false
         } catch (e: IOException) {
             Log.e(TAG, "Request error", e)
             false
         }
+    }
+
+    private fun buildApiUrl(path: String): String? {
+        val baseUrl = normalizedServerUrl ?: run {
+            Log.e(TAG, "Invalid server URL for API requests: '$serverUrl'")
+            return null
+        }
+        return "${baseUrl.removeSuffix("/")}/${path.trimStart('/')}"
+    }
+
+    private fun buildWebSocketUrl(): String? {
+        val baseUrl = normalizedServerUrl ?: return null
+        val parsed = baseUrl.toHttpUrlOrNull() ?: return null
+        val wsScheme = if (parsed.isHttps) "wss" else "ws"
+        val pathSegments = parsed.pathSegments.filter { it.isNotEmpty() }.toMutableList()
+        if (pathSegments.lastOrNull() == "api") {
+            pathSegments.removeAt(pathSegments.lastIndex)
+        }
+
+        val builder = parsed.newBuilder()
+            .scheme(wsScheme)
+            .encodedPath("/")
+        pathSegments.forEach { segment ->
+            builder.addPathSegment(segment)
+        }
+        builder.addPathSegment("app")
+        builder.addPathSegment("securicam-app-key")
+        return builder.build().toString()
+    }
+
+    private fun normalizeServerUrl(rawUrl: String): String? {
+        val trimmed = rawUrl.trim()
+        if (trimmed.isEmpty()) {
+            return null
+        }
+
+        val withScheme = if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) {
+            trimmed
+        } else {
+            "http://$trimmed"
+        }
+
+        return withScheme.toHttpUrlOrNull()?.toString()?.removeSuffix("/")
     }
 
     fun disconnect() {
