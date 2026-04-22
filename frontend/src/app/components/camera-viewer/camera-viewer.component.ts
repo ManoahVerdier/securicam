@@ -69,7 +69,12 @@ export class CameraViewerComponent implements OnInit, OnDestroy, AfterViewInit {
   connect(): void {
     this.isLoading = true;
     this.hasError = false;
-    this.webrtcService.connectToCamera(this.camera.id);
+    this.webrtcService.connectToCamera(this.camera.id).catch((error) => {
+      console.error(`[CameraViewer] Failed to connect to camera ${this.camera.id}`, error);
+      this.hasError = true;
+      this.isLoading = false;
+      this.errorMessage = 'Connexion à la caméra impossible';
+    });
 
     // Check if stream is already available
     const existingStream = this.webrtcService.getStream(this.camera.id);

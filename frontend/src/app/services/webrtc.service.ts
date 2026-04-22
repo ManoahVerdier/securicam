@@ -1,9 +1,9 @@
 import { Injectable, OnDestroy } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Subject, Observable, Subscription } from 'rxjs';
+import { Subject, Observable, Subscription, firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { SignalingService } from './signaling.service';
-import { WebRtcAnswer, WebRtcIceCandidate } from '../models';
+import { CameraResponse, CameraStatus, WebRtcAnswer, WebRtcIceCandidate } from '../models';
 
 export interface WebRtcState {
   cameraId: number;
@@ -16,6 +16,9 @@ export interface WebRtcState {
   providedIn: 'root'
 })
 export class WebrtcService implements OnDestroy {
+  private static readonly CAMERA_READY_TIMEOUT_MS = 30000;
+  private static readonly CAMERA_STATUS_POLL_INTERVAL_MS = 2000;
+
   private peerConnections: Map<number, RTCPeerConnection> = new Map();
   private remoteStreams: Map<number, MediaStream> = new Map();
 
@@ -51,13 +54,18 @@ export class WebrtcService implements OnDestroy {
   }
 
   async connectToCamera(cameraId: number): Promise<void> {
+    console.info(`[WebRTC] Starting connection flow for camera ${cameraId}`);
+
     // Close existing connection if any
     this.disconnectFromCamera(cameraId);
 
     // Join the signaling channel first so offers are never missed
     this.signalingService.joinCameraChannel(cameraId);
 
-    this.requestStreamStart(cameraId);
+    await this.requestStreamStart(cameraId);
+    const cameraStatus = await this.waitForCameraReady(cameraId, WebrtcService.CAMERA_READY_TIMEOUT_MS);
+    console.info(`[WebRTC] Camera ${cameraId} is ready with status "${cameraStatus}"`);
+
     const pc = new RTCPeerConnection({
       iceServers: environment.iceServers
     });
@@ -67,6 +75,7 @@ export class WebrtcService implements OnDestroy {
     // Handle ICE candidates
     pc.onicecandidate = (event) => {
       if (event.candidate) {
+        console.info(`[WebRTC] Local ICE candidate generated for camera ${cameraId}`);
         this.sendIceCandidate(cameraId, event.candidate);
       }
     };
@@ -75,6 +84,7 @@ export class WebrtcService implements OnDestroy {
     pc.ontrack = (event) => {
       const stream = event.streams[0];
       if (stream) {
+        console.info(`[WebRTC] Remote stream received for camera ${cameraId}`);
         this.remoteStreams.set(cameraId, stream);
         this.streamSubject.next({ cameraId, stream });
         this.emitState(cameraId, pc, true);
@@ -83,24 +93,63 @@ export class WebrtcService implements OnDestroy {
 
     // Handle connection state changes
     pc.onconnectionstatechange = () => {
+      console.info(`[WebRTC] Connection state for camera ${cameraId}: ${pc.connectionState}`);
       this.emitState(cameraId, pc, this.remoteStreams.has(cameraId));
     };
 
     pc.oniceconnectionstatechange = () => {
+      console.info(`[WebRTC] ICE connection state for camera ${cameraId}: ${pc.iceConnectionState}`);
       this.emitState(cameraId, pc, this.remoteStreams.has(cameraId));
 
       if (pc.iceConnectionState === 'failed') {
+        console.warn(`[WebRTC] ICE failed for camera ${cameraId}, restarting ICE`);
         pc.restartIce();
       }
     };
   }
 
-  private requestStreamStart(cameraId: number): void {
-    this.http.post(`${environment.apiUrl}/webrtc/start`, {
-      camera_id: cameraId
-    }).subscribe({
-      error: (error) => console.error('Error requesting camera stream start:', error)
-    });
+  private async requestStreamStart(cameraId: number): Promise<void> {
+    console.info(`[WebRTC] Requesting stream start for camera ${cameraId}`);
+    try {
+      await firstValueFrom(this.http.post(`${environment.apiUrl}/webrtc/start`, {
+        camera_id: cameraId
+      }));
+      console.info(`[WebRTC] Stream start request accepted for camera ${cameraId}`);
+    } catch (error) {
+      console.error(`[WebRTC] Stream start request failed for camera ${cameraId}`, error);
+    }
+  }
+
+  private async waitForCameraReady(cameraId: number, timeoutMs: number): Promise<CameraStatus> {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+      try {
+        const status = await this.getCameraStatus(cameraId);
+        console.info(`[WebRTC] Camera ${cameraId} polled status: ${status}`);
+
+        if (status === 'online' || status === 'streaming' || status === 'recording') {
+          return status;
+        }
+      } catch (error) {
+        console.warn(`[WebRTC] Camera ${cameraId} status polling failed`, error);
+      }
+
+      await this.delay(WebrtcService.CAMERA_STATUS_POLL_INTERVAL_MS);
+    }
+
+    throw new Error(`Camera ${cameraId} did not become ready within ${timeoutMs / 1000}s`);
+  }
+
+  private async getCameraStatus(cameraId: number): Promise<CameraStatus> {
+    const response = await firstValueFrom(
+      this.http.get<CameraResponse>(`${environment.apiUrl}/cameras/${cameraId}`)
+    );
+    return response.camera.status;
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   disconnectFromCamera(cameraId: number): void {
@@ -124,10 +173,17 @@ export class WebrtcService implements OnDestroy {
   }
 
   private async handleOffer(cameraId: number, sdp: string): Promise<void> {
+    console.info(`[WebRTC] Offer received for camera ${cameraId}`);
     let pc = this.peerConnections.get(cameraId);
 
     if (!pc) {
-      await this.connectToCamera(cameraId);
+      console.info(`[WebRTC] No peer connection for camera ${cameraId}, creating one from offer`);
+      try {
+        await this.connectToCamera(cameraId);
+      } catch (error) {
+        console.error(`[WebRTC] Failed to initialize connection for camera ${cameraId} from offer`, error);
+        return;
+      }
       pc = this.peerConnections.get(cameraId);
     }
 
@@ -137,9 +193,11 @@ export class WebrtcService implements OnDestroy {
     }
 
     try {
+      console.info(`[WebRTC] Applying remote offer for camera ${cameraId}`);
       await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp }));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
+      console.info(`[WebRTC] Sending answer for camera ${cameraId}`);
 
       // Send answer back through API
       this.sendAnswer(cameraId, answer.sdp!);
@@ -151,10 +209,12 @@ export class WebrtcService implements OnDestroy {
   private async handleIceCandidate(cameraId: number, candidate: RTCIceCandidateInit): Promise<void> {
     const pc = this.peerConnections.get(cameraId);
     if (!pc) {
+      console.warn(`[WebRTC] Ignoring ICE candidate for camera ${cameraId}: no peer connection`);
       return;
     }
 
     try {
+      console.info(`[WebRTC] Applying remote ICE candidate for camera ${cameraId}`);
       await pc.addIceCandidate(new RTCIceCandidate(candidate));
     } catch (error) {
       console.error('Error adding ICE candidate:', error);
