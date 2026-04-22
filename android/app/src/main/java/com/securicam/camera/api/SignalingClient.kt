@@ -174,7 +174,19 @@ class SignalingClient(
                 return
             }
 
-            val data = json.get("data")?.asJsonObject
+            val data = json.get("data")?.let { dataElement ->
+                try {
+                    when {
+                        dataElement.isJsonObject -> dataElement.asJsonObject
+                        dataElement.isJsonPrimitive && dataElement.asJsonPrimitive.isString ->
+                            gson.fromJson(dataElement.asString, JsonObject::class.java)
+                        else -> null
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to parse data field", e)
+                    null
+                }
+            }
 
             when (event) {
                 "webrtc.offer" -> {

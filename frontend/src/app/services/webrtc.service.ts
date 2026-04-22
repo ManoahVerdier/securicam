@@ -54,9 +54,10 @@ export class WebrtcService implements OnDestroy {
     // Close existing connection if any
     this.disconnectFromCamera(cameraId);
 
-    this.requestStreamStart(cameraId);
+    // Join the signaling channel first so offers are never missed
+    this.signalingService.joinCameraChannel(cameraId);
 
-    // Create peer connection
+    this.requestStreamStart(cameraId);
     const pc = new RTCPeerConnection({
       iceServers: environment.iceServers
     });
@@ -92,9 +93,6 @@ export class WebrtcService implements OnDestroy {
         pc.restartIce();
       }
     };
-
-    // Join the signaling channel
-    this.signalingService.joinCameraChannel(cameraId);
   }
 
   private requestStreamStart(cameraId: number): void {
