@@ -27,8 +27,9 @@ import com.securicam.camera.SecuricamApp
 import com.securicam.camera.ui.MainActivity
 import com.securicam.camera.webrtc.WebRtcClient
 import com.securicam.camera.api.SignalingClient
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -60,7 +61,7 @@ class CameraService : LifecycleService() {
     private var authToken: String = ""
     private var cameraId: Int = 0
     private var isStreamStarting: Boolean = false
-    private var signalingConnectDeferred: CompletableDeferred<Boolean>? = null
+    private val signalingConnectMutex = Mutex()
     
     var isStreaming: Boolean = false
         private set
@@ -158,22 +159,19 @@ class CameraService : LifecycleService() {
 
     private fun connectSignalingIfNeeded() {
         serviceScope.launch {
-            ensureSignalingConnected()
+            if (!ensureSignalingConnected()) {
+                Log.w(TAG, "Signaling connection is not ready")
+            }
         }
     }
 
-    private suspend fun ensureSignalingConnected(): Boolean {
-        signalingClient?.let { return true }
-
-        signalingConnectDeferred?.let { return it.await() }
+    private suspend fun ensureSignalingConnected(): Boolean = signalingConnectMutex.withLock {
+        signalingClient?.let { return@withLock true }
 
         if (serverUrl.isEmpty() || authToken.isEmpty() || cameraId == 0) {
             Log.w(TAG, "Cannot connect signaling: missing configuration")
-            return false
+            return@withLock false
         }
-
-        val deferred = CompletableDeferred<Boolean>()
-        signalingConnectDeferred = deferred
 
         val client = SignalingClient(serverUrl, authToken, cameraId)
         val isConnected = try {
@@ -215,9 +213,7 @@ class CameraService : LifecycleService() {
             signalingClient = null
         }
 
-        deferred.complete(isConnected)
-        signalingConnectDeferred = null
-        return isConnected
+        return@withLock isConnected
     }
 
     private fun disconnectSignaling() {

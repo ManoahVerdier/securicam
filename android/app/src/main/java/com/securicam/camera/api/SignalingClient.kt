@@ -22,6 +22,9 @@ class SignalingClient(
 
     companion object {
         private const val TAG = "SignalingClient"
+        private const val EVENT_SUBSCRIPTION_SUCCEEDED_INTERNAL = "pusher_internal:subscription_succeeded"
+        private const val EVENT_SUBSCRIPTION_SUCCEEDED = "pusher:subscription_succeeded"
+        private const val EVENT_PUSHER_ERROR = "pusher:error"
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 
@@ -115,12 +118,16 @@ class SignalingClient(
             }
         })
 
-        val connected = withTimeoutOrNull(timeoutMs) {
-            connectionReadyDeferred?.await() ?: false
-        } ?: false
+        val readyDeferred = connectionReadyDeferred ?: return false
+        val awaitedResult = withTimeoutOrNull(timeoutMs) { readyDeferred.await() }
+        val connected = awaitedResult ?: false
 
         if (!connected) {
-            Log.e(TAG, "WebSocket signaling connection timeout or subscription failed")
+            if (awaitedResult == null) {
+                Log.e(TAG, "WebSocket signaling connection timed out after ${timeoutMs}ms")
+            } else {
+                Log.e(TAG, "WebSocket signaling subscription failed")
+            }
             disconnect()
         }
 
@@ -142,7 +149,8 @@ class SignalingClient(
         try {
             val json = gson.fromJson(message, JsonObject::class.java)
             val event = json.get("event")?.asString ?: return
-            if (event == "pusher_internal:subscription_succeeded" || event == "pusher:subscription_succeeded") {
+            if (event == EVENT_SUBSCRIPTION_SUCCEEDED_INTERNAL || event == EVENT_SUBSCRIPTION_SUCCEEDED) {
+                Log.d(TAG, "WebSocket channel subscription succeeded for camera $cameraId")
                 connectionReadyDeferred?.let {
                     if (!it.isCompleted) {
                         it.complete(true)
@@ -150,7 +158,7 @@ class SignalingClient(
                 }
                 return
             }
-            if (event == "pusher:error") {
+            if (event == EVENT_PUSHER_ERROR) {
                 connectionReadyDeferred?.let {
                     if (!it.isCompleted) {
                         it.complete(false)
