@@ -373,21 +373,21 @@ class SignalingClient(
     private fun buildWebSocketUrl(): String? {
         val baseUrl = normalizedServerUrl ?: return null
         val parsed = baseUrl.toHttpUrlOrNull() ?: return null
-        val wsScheme = if (parsed.isHttps) "wss" else "ws"
         val pathSegments = parsed.pathSegments.filter { it.isNotEmpty() }.toMutableList()
         if (pathSegments.lastOrNull() == "api") {
             pathSegments.removeAt(pathSegments.lastIndex)
         }
 
-        val builder = parsed.newBuilder()
-            .scheme(wsScheme)
-            .encodedPath("/")
+        // Build as http/https first — OkHttp's HttpUrl.Builder rejects ws/wss schemes
+        val builder = parsed.newBuilder().encodedPath("/")
         pathSegments.forEach { segment ->
             builder.addPathSegment(segment)
         }
         builder.addPathSegment("app")
         builder.addPathSegment("securicam-app-key")
-        return builder.build().toString()
+        val httpUrl = builder.build().toString()
+        // Then swap scheme to ws/wss
+        return httpUrl.replaceFirst("https://", "wss://").replaceFirst("http://", "ws://")
     }
 
     private fun normalizeServerUrl(rawUrl: String): String? {
