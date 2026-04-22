@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.lifecycle.LifecycleOwner
+import com.google.gson.JsonParser
 import org.webrtc.*
 import java.util.concurrent.Executors
 
@@ -33,6 +34,7 @@ class WebRtcClient(
     private var eglBase: EglBase? = null
     
     private var iceCandidateCallback: ((IceCandidate) -> Unit)? = null
+    private var connectionStateCallback: ((Boolean) -> Unit)? = null
     private val executor = Executors.newSingleThreadExecutor()
 
     init {
@@ -164,6 +166,16 @@ class WebRtcClient(
 
                 override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
                     Log.d(TAG, "onIceConnectionChange: $state")
+                    when (state) {
+                        PeerConnection.IceConnectionState.CONNECTED,
+                        PeerConnection.IceConnectionState.COMPLETED ->
+                            connectionStateCallback?.invoke(true)
+                        PeerConnection.IceConnectionState.DISCONNECTED,
+                        PeerConnection.IceConnectionState.FAILED,
+                        PeerConnection.IceConnectionState.CLOSED ->
+                            connectionStateCallback?.invoke(false)
+                        else -> {}
+                    }
                 }
 
                 override fun onIceConnectionReceivingChange(receiving: Boolean) {
@@ -269,9 +281,14 @@ class WebRtcClient(
 
     fun addIceCandidate(candidateJson: String) {
         try {
-            // Parse candidate JSON and add to peer connection
-            // This is a simplified version - actual implementation needs JSON parsing
-            val candidate = IceCandidate("0", 0, candidateJson)
+            val obj = JsonParser.parseString(candidateJson).asJsonObject
+            val candidateSdp = obj.get("candidate")?.asString ?: run {
+                Log.w(TAG, "ICE candidate JSON missing 'candidate' field: $candidateJson")
+                return
+            }
+            val sdpMid = obj.get("sdpMid")?.takeIf { !it.isJsonNull }?.asString ?: ""
+            val sdpMLineIndex = obj.get("sdpMLineIndex")?.takeIf { !it.isJsonNull }?.asInt ?: 0
+            val candidate = IceCandidate(sdpMid, sdpMLineIndex, candidateSdp)
             peerConnection?.addIceCandidate(candidate)
             Log.d(TAG, "ICE candidate added")
         } catch (e: Exception) {
@@ -281,6 +298,10 @@ class WebRtcClient(
 
     fun setIceCandidateCallback(callback: (IceCandidate) -> Unit) {
         iceCandidateCallback = callback
+    }
+
+    fun setConnectionStateCallback(callback: (Boolean) -> Unit) {
+        connectionStateCallback = callback
     }
 
     fun release() {

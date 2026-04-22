@@ -276,24 +276,34 @@ class CameraService : LifecycleService() {
 
                 // Initialize WebRTC
                 webRtcClient = WebRtcClient(applicationContext, cameraProvider!!, this@CameraService)
-                
+
+                // Set callbacks before creating the offer so no early candidates are lost
+                webRtcClient?.setConnectionStateCallback { connected ->
+                    if (connected && !isStreaming) {
+                        isStreaming = true
+                        isStreamStarting = false
+                        serviceScope.launch { updateStatus("streaming") }
+                    } else if (!connected && isStreaming) {
+                        isStreaming = false
+                        serviceScope.launch { updateStatus("online") }
+                    }
+                }
+
+                webRtcClient?.setIceCandidateCallback { candidate ->
+                    serviceScope.launch {
+                        signalingClient?.sendIceCandidate(candidate)
+                    }
+                }
+
                 // Create and send offer
                 webRtcClient?.createOffer { sdp ->
                     serviceScope.launch {
                         signalingClient?.sendOffer(sdp)
                     }
                 }
-                
-                // Set ICE candidate callback
-                webRtcClient?.setIceCandidateCallback { candidate ->
-                    serviceScope.launch {
-                        signalingClient?.sendIceCandidate(candidate)
-                    }
-                }
-                
-                isStreaming = true
-                isStreamStarting = false
-                updateStatus("streaming")
+
+                // isStreaming will be set to true by the connection-state callback
+                // when ICE reaches CONNECTED; isStreamStarting was set by the caller.
                 
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start WebRTC streaming", e)
