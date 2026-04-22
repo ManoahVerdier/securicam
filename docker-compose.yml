@@ -9,6 +9,9 @@ services:
     container_name: securicam-backend
     restart: unless-stopped
     working_dir: /var/www
+    # Run migrations before starting PHP-FPM so dependent services (reverb) can wait
+    command: >-
+      sh -c "php artisan migrate --force && php-fpm"
     volumes:
       - ./backend:/var/www
       - ./backend/storage:/var/www/storage
@@ -29,9 +32,17 @@ services:
       - REVERB_APP_SECRET=securicam-app-secret
       - REVERB_HOST=reverb
       - REVERB_PORT=8081
+    healthcheck:
+      test: ["CMD", "php", "artisan", "migrate:status"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - securicam-network
 
@@ -77,8 +88,10 @@ services:
       - REVERB_APP_KEY=securicam-app-key
       - REVERB_APP_SECRET=securicam-app-secret
     depends_on:
-      - backend
-      - redis
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - securicam-network
 
@@ -96,6 +109,12 @@ services:
       - dbdata:/var/lib/mysql
     ports:
       - "3307:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-usecuricam", "-psecret"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     networks:
       - securicam-network
 
