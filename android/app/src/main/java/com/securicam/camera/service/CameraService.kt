@@ -199,6 +199,9 @@ class CameraService : LifecycleService() {
                 },
                 onStopRecording = {
                     stopRecording()
+                },
+                onError = { error ->
+                    Log.e(TAG, "Signaling error: $error")
                 }
             )
         } catch (e: Exception) {
