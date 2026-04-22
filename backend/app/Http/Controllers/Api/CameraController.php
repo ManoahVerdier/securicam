@@ -10,6 +10,38 @@ use Illuminate\Http\Request;
 class CameraController extends Controller
 {
     /**
+     * Initialize camera status by device_id.
+     */
+    public function initStatus(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'device_id' => ['required', 'string', 'max:255'],
+            'status' => ['required', 'string', 'in:offline,online,streaming,recording'],
+        ]);
+
+        $camera = $request->user()
+            ->cameras()
+            ->where('device_id', $validated['device_id'])
+            ->first();
+
+        if (!$camera) {
+            return response()->json([
+                'message' => 'Camera not found',
+            ], 404);
+        }
+
+        $camera->update([
+            'status' => $validated['status'],
+            'last_seen_at' => now(),
+        ]);
+
+        return response()->json([
+            'message' => 'Camera status initialized',
+            'camera' => $camera,
+        ]);
+    }
+
+    /**
      * Display a listing of cameras for the authenticated user.
      */
     public function index(Request $request): JsonResponse

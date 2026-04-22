@@ -274,6 +274,8 @@ class CameraService : LifecycleService() {
                     throw IllegalStateException("Signaling is not connected")
                 }
 
+                updateStatus("online")
+
                 // Initialize WebRTC
                 webRtcClient = WebRtcClient(applicationContext, cameraProvider!!, this@CameraService)
 

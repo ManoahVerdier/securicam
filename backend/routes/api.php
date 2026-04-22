@@ -30,6 +30,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Cameras
     Route::apiResource('cameras', CameraController::class);
+    Route::post('/cameras/init-status', [CameraController::class, 'initStatus']);
     Route::patch('/cameras/{camera}/status', [CameraController::class, 'updateStatus']);
 
     // WebRTC signaling
