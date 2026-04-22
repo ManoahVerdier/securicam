@@ -3,7 +3,9 @@ package com.securicam.camera.api
 import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.JsonObject
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -40,8 +42,9 @@ class SignalingClient(
     private var onStopStreamingCallback: (() -> Unit)? = null
     private var onStartRecordingCallback: (() -> Unit)? = null
     private var onStopRecordingCallback: (() -> Unit)? = null
+    private var connectionReadyDeferred: CompletableDeferred<Boolean>? = null
 
-    fun connect(
+    suspend fun connect(
         onOffer: (String) -> Unit,
         onAnswer: (String) -> Unit,
         onIceCandidate: (String) -> Unit,
@@ -49,8 +52,9 @@ class SignalingClient(
         onStartStreaming: () -> Unit,
         onStopStreaming: () -> Unit,
         onStartRecording: () -> Unit,
-        onStopRecording: () -> Unit
-    ) {
+        onStopRecording: () -> Unit,
+        timeoutMs: Long = 10_000L
+    ): Boolean {
         onOfferCallback = onOffer
         onAnswerCallback = onAnswer
         onIceCandidateCallback = onIceCandidate
@@ -59,16 +63,23 @@ class SignalingClient(
         onStopStreamingCallback = onStopStreaming
         onStartRecordingCallback = onStartRecording
         onStopRecordingCallback = onStopRecording
+        connectionReadyDeferred = CompletableDeferred()
 
         val wsUrl = serverUrl
             .replace("http://", "ws://")
             .replace("https://", "wss://")
             .replace("/api", "") + "/app/securicam-app-key"
 
-        val request = Request.Builder()
-            .url(wsUrl)
-            .addHeader("Authorization", "Bearer $authToken")
-            .build()
+        val request = try {
+            Request.Builder()
+                .url(wsUrl)
+                .addHeader("Authorization", "Bearer $authToken")
+                .build()
+        } catch (e: IllegalArgumentException) {
+            Log.e(TAG, "Invalid WebSocket URL: $wsUrl", e)
+            connectionReadyDeferred?.complete(false)
+            return false
+        }
 
         webSocket = httpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -85,14 +96,35 @@ class SignalingClient(
                 Log.d(TAG, "WebSocket closing: $code - $reason")
             }
 
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                Log.d(TAG, "WebSocket closed: $code - $reason")
-            }
-
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.e(TAG, "WebSocket error", t)
+                connectionReadyDeferred?.let {
+                    if (!it.isCompleted) {
+                        it.complete(false)
+                    }
+                }
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                Log.d(TAG, "WebSocket closed: $code - $reason")
+                connectionReadyDeferred?.let {
+                    if (!it.isCompleted) {
+                        it.complete(false)
+                    }
+                }
             }
         })
+
+        val connected = withTimeoutOrNull(timeoutMs) {
+            connectionReadyDeferred?.await() ?: false
+        } ?: false
+
+        if (!connected) {
+            Log.e(TAG, "WebSocket signaling connection timeout or subscription failed")
+            disconnect()
+        }
+
+        return connected
     }
 
     private fun subscribeToChannel() {
@@ -110,6 +142,23 @@ class SignalingClient(
         try {
             val json = gson.fromJson(message, JsonObject::class.java)
             val event = json.get("event")?.asString ?: return
+            if (event == "pusher_internal:subscription_succeeded" || event == "pusher:subscription_succeeded") {
+                connectionReadyDeferred?.let {
+                    if (!it.isCompleted) {
+                        it.complete(true)
+                    }
+                }
+                return
+            }
+            if (event == "pusher:error") {
+                connectionReadyDeferred?.let {
+                    if (!it.isCompleted) {
+                        it.complete(false)
+                    }
+                }
+                return
+            }
+
             val data = json.get("data")?.asJsonObject
 
             when (event) {
@@ -208,6 +257,12 @@ class SignalingClient(
     }
 
     fun disconnect() {
+        connectionReadyDeferred?.let {
+            if (!it.isCompleted) {
+                it.complete(false)
+            }
+        }
+        connectionReadyDeferred = null
         webSocket?.close(1000, "Client disconnecting")
         webSocket = null
     }
