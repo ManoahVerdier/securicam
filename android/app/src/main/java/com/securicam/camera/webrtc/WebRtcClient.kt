@@ -30,14 +30,21 @@ class WebRtcClient(
     private var localAudioTrack: AudioTrack? = null
     private var videoCapturer: CameraVideoCapturer? = null
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
+    private var eglBase: EglBase? = null
     
     private var iceCandidateCallback: ((IceCandidate) -> Unit)? = null
     private val executor = Executors.newSingleThreadExecutor()
 
     init {
-        initializePeerConnectionFactory()
-        initializeMediaSources()
-        createPeerConnection()
+        try {
+            initializePeerConnectionFactory()
+            initializeMediaSources()
+            createPeerConnection()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize WebRTC client", e)
+            cleanupAfterInitializationFailure()
+            throw IllegalStateException("Failed to initialize WebRTC client: ${e.message}", e)
+        }
     }
 
     private fun initializePeerConnectionFactory() {
@@ -47,34 +54,61 @@ class WebRtcClient(
         
         PeerConnectionFactory.initialize(options)
 
+        eglBase = try {
+            EglBase.create()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create EGL base", e)
+            throw IllegalStateException("Failed to create EGL base", e)
+        }
+
+        val eglBaseContext = eglBase?.eglBaseContext
+            ?: throw IllegalStateException("EGL base context is unavailable")
+
         val encoderFactory = DefaultVideoEncoderFactory(
-            EglBase.create().eglBaseContext,
+            eglBaseContext,
             true,
             true
         )
         
-        val decoderFactory = DefaultVideoDecoderFactory(EglBase.create().eglBaseContext)
+        val decoderFactory = DefaultVideoDecoderFactory(eglBaseContext)
 
         peerConnectionFactory = PeerConnectionFactory.builder()
             .setVideoEncoderFactory(encoderFactory)
             .setVideoDecoderFactory(decoderFactory)
             .createPeerConnectionFactory()
+            ?: throw IllegalStateException("Failed to create PeerConnectionFactory")
     }
 
     private fun initializeMediaSources() {
+        val factory = peerConnectionFactory
+            ?: throw IllegalStateException("PeerConnectionFactory is not initialized")
+
         // Create video source
-        localVideoSource = peerConnectionFactory?.createVideoSource(false)
+        localVideoSource = factory.createVideoSource(false)
+        val videoSource = localVideoSource
+            ?: throw IllegalStateException("Failed to create local video source")
         
         // Create video capturer
-        val eglBaseContext = EglBase.create().eglBaseContext
+        val eglBaseContext = eglBase?.eglBaseContext
+            ?: throw IllegalStateException("EGL base context is unavailable")
         surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", eglBaseContext)
+            ?: throw IllegalStateException("Failed to create SurfaceTextureHelper")
         
         videoCapturer = createCameraCapturer()
-        videoCapturer?.initialize(surfaceTextureHelper, context, localVideoSource?.capturerObserver)
-        videoCapturer?.startCapture(1280, 720, 30)
+            ?: throw IllegalStateException(
+                "No camera capturer available. Verify camera permission is granted and camera hardware is not in use by another app."
+            )
+
+        try {
+            videoCapturer?.initialize(surfaceTextureHelper, context, videoSource.capturerObserver)
+            videoCapturer?.startCapture(1280, 720, 30)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize or start camera capture", e)
+            throw IllegalStateException("Failed to initialize or start camera capture", e)
+        }
         
         // Create video track
-        localVideoTrack = peerConnectionFactory?.createVideoTrack("video_track", localVideoSource)
+        localVideoTrack = factory.createVideoTrack("video_track", videoSource)
         localVideoTrack?.setEnabled(true)
         
         // Create audio source and track
@@ -84,8 +118,8 @@ class WebRtcClient(
             mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
         }
         
-        localAudioSource = peerConnectionFactory?.createAudioSource(audioConstraints)
-        localAudioTrack = peerConnectionFactory?.createAudioTrack("audio_track", localAudioSource)
+        localAudioSource = factory.createAudioSource(audioConstraints)
+        localAudioTrack = factory.createAudioTrack("audio_track", localAudioSource)
         localAudioTrack?.setEnabled(true)
     }
 
@@ -110,6 +144,9 @@ class WebRtcClient(
     }
 
     private fun createPeerConnection() {
+        val factory = peerConnectionFactory
+            ?: throw IllegalStateException("PeerConnectionFactory is not initialized")
+
         val rtcConfig = PeerConnection.RTCConfiguration(ICE_SERVERS).apply {
             bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
             rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
@@ -118,7 +155,7 @@ class WebRtcClient(
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
         }
 
-        peerConnection = peerConnectionFactory?.createPeerConnection(
+        peerConnection = factory.createPeerConnection(
             rtcConfig,
             object : PeerConnection.Observer {
                 override fun onSignalingChange(state: PeerConnection.SignalingState?) {
@@ -169,6 +206,7 @@ class WebRtcClient(
                 }
             }
         )
+            ?: throw IllegalStateException("Failed to create peer connection")
 
         // Add local tracks to peer connection
         localVideoTrack?.let {
@@ -248,26 +286,42 @@ class WebRtcClient(
     fun release() {
         executor.execute {
             try {
-                videoCapturer?.stopCapture()
-                videoCapturer?.dispose()
-                
-                localVideoTrack?.dispose()
-                localAudioTrack?.dispose()
-                
-                localVideoSource?.dispose()
-                localAudioSource?.dispose()
-                
-                surfaceTextureHelper?.dispose()
-                
-                peerConnection?.close()
-                peerConnection?.dispose()
-                
-                peerConnectionFactory?.dispose()
+                stopCaptureSafely()
+                releaseResources()
                 
                 Log.d(TAG, "WebRTC resources released")
             } catch (e: Exception) {
                 Log.e(TAG, "Error releasing WebRTC resources", e)
             }
         }
+    }
+
+    private fun cleanupAfterInitializationFailure() {
+        try {
+            releaseResources()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to clean up WebRTC resources after initialization error", e)
+        }
+    }
+
+    private fun stopCaptureSafely() {
+        try {
+            videoCapturer?.stopCapture()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to stop capturer", e)
+        }
+    }
+
+    private fun releaseResources() {
+        videoCapturer?.dispose()
+        localVideoTrack?.dispose()
+        localAudioTrack?.dispose()
+        localVideoSource?.dispose()
+        localAudioSource?.dispose()
+        surfaceTextureHelper?.dispose()
+        peerConnection?.close()
+        peerConnection?.dispose()
+        peerConnectionFactory?.dispose()
+        eglBase?.release()
     }
 }

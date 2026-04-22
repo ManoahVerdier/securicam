@@ -164,33 +164,40 @@ class CameraService : LifecycleService() {
             return
         }
 
-        signalingClient = SignalingClient(serverUrl, authToken, cameraId).also { client ->
-            client.connect(
-                onOffer = { _ ->
-                    // Viewer answers camera offers in this flow, so incoming offers are ignored.
-                },
-                onAnswer = { sdp ->
-                    webRtcClient?.handleAnswer(sdp)
-                },
-                onIceCandidate = { candidate ->
-                    webRtcClient?.addIceCandidate(candidate)
-                },
-                onCapturePhoto = {
-                    capturePhoto()
-                },
-                onStartStreaming = {
-                    startStreamingIfNeeded()
-                },
-                onStopStreaming = {
-                    stopStreaming(keepReady = true)
-                },
-                onStartRecording = {
-                    startRecording()
-                },
-                onStopRecording = {
-                    stopRecording()
-                }
-            )
+        val client = SignalingClient(serverUrl, authToken, cameraId)
+        val connected = client.connect(
+            onOffer = { _ ->
+                // Viewer answers camera offers in this flow, so incoming offers are ignored.
+            },
+            onAnswer = { sdp ->
+                webRtcClient?.handleAnswer(sdp)
+            },
+            onIceCandidate = { candidate ->
+                webRtcClient?.addIceCandidate(candidate)
+            },
+            onCapturePhoto = {
+                capturePhoto()
+            },
+            onStartStreaming = {
+                startStreamingIfNeeded()
+            },
+            onStopStreaming = {
+                stopStreaming(keepReady = true)
+            },
+            onStartRecording = {
+                startRecording()
+            },
+            onStopRecording = {
+                stopRecording()
+            },
+            onError = { error ->
+                Log.e(TAG, "Signaling error: $error")
+            }
+        )
+        if (connected) {
+            signalingClient = client
+        } else {
+            signalingClient = null
         }
     }
 
