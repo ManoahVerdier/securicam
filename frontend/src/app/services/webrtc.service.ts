@@ -62,10 +62,6 @@ export class WebrtcService implements OnDestroy {
     // Join the signaling channel first so offers are never missed
     this.signalingService.joinCameraChannel(cameraId);
 
-    await this.requestStreamStart(cameraId);
-    const cameraStatus = await this.waitForCameraReady(cameraId, WebrtcService.CAMERA_READY_TIMEOUT_MS);
-    console.info(`[WebRTC] Camera ${cameraId} is ready with status "${cameraStatus}"`);
-
     const pc = new RTCPeerConnection({
       iceServers: environment.iceServers
     });
@@ -106,6 +102,15 @@ export class WebrtcService implements OnDestroy {
         pc.restartIce();
       }
     };
+
+    try {
+      await this.requestStreamStart(cameraId);
+      const cameraStatus = await this.waitForCameraReady(cameraId, WebrtcService.CAMERA_READY_TIMEOUT_MS);
+      console.info(`[WebRTC] Camera ${cameraId} is ready with status "${cameraStatus}"`);
+    } catch (error) {
+      this.disconnectFromCamera(cameraId);
+      throw error;
+    }
   }
 
   private async requestStreamStart(cameraId: number): Promise<void> {
