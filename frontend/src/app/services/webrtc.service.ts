@@ -138,7 +138,7 @@ export class WebrtcService implements OnDestroy {
       await this.delay(WebrtcService.CAMERA_STATUS_POLL_INTERVAL_MS);
     }
 
-    throw new Error(`Camera ${cameraId} did not become ready within ${timeoutMs / 1000} seconds`);
+    throw new Error(`Camera ${cameraId} did not become ready within ${timeoutMs / 1000}s`);
   }
 
   private async getCameraStatus(cameraId: number): Promise<CameraStatus> {

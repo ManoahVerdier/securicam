@@ -81,7 +81,7 @@ describe('WebrtcService', () => {
     expect((service as any).peerConnections.has(1)).toBeTrue();
   }));
 
-  it('continues polling camera status when start request returns 422', fakeAsync(() => {
+  it('should continue polling and create connection when stream start returns 422 but camera becomes ready', fakeAsync(() => {
     let completed = false;
     service.connectToCamera(2).then(() => {
       completed = true;
