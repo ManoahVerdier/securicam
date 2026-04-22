@@ -3,7 +3,9 @@ package com.securicam.camera.api
 import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.JsonObject
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -21,6 +23,9 @@ class SignalingClient(
 
     companion object {
         private const val TAG = "SignalingClient"
+        private const val EVENT_SUBSCRIPTION_SUCCEEDED_INTERNAL = "pusher_internal:subscription_succeeded"
+        private const val EVENT_SUBSCRIPTION_SUCCEEDED = "pusher:subscription_succeeded"
+        private const val EVENT_PUSHER_ERROR = "pusher:error"
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 
@@ -42,8 +47,9 @@ class SignalingClient(
     private var onStopStreamingCallback: (() -> Unit)? = null
     private var onStartRecordingCallback: (() -> Unit)? = null
     private var onStopRecordingCallback: (() -> Unit)? = null
+    private var connectionReadyDeferred: CompletableDeferred<Boolean>? = null
 
-    fun connect(
+    suspend fun connect(
         onOffer: (String) -> Unit,
         onAnswer: (String) -> Unit,
         onIceCandidate: (String) -> Unit,
@@ -52,6 +58,7 @@ class SignalingClient(
         onStopStreaming: () -> Unit,
         onStartRecording: () -> Unit,
         onStopRecording: () -> Unit,
+        timeoutMs: Long = 10_000L,
         onError: (String) -> Unit = {}
     ): Boolean {
         onOfferCallback = onOffer
@@ -62,6 +69,7 @@ class SignalingClient(
         onStopStreamingCallback = onStopStreaming
         onStartRecordingCallback = onStartRecording
         onStopRecordingCallback = onStopRecording
+        connectionReadyDeferred = CompletableDeferred()
 
         val wsUrl = buildWebSocketUrl()
         if (wsUrl == null) {
@@ -80,6 +88,7 @@ class SignalingClient(
             val errorMessage = "Cannot connect signaling: invalid WebSocket URL '$wsUrl'"
             Log.e(TAG, errorMessage, e)
             onError(errorMessage)
+            connectionReadyDeferred?.complete(false)
             return false
         }
 
@@ -98,15 +107,38 @@ class SignalingClient(
                 Log.d(TAG, "WebSocket closing: $code - $reason")
             }
 
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                Log.d(TAG, "WebSocket closed: $code - $reason")
-            }
-
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.e(TAG, "WebSocket error", t)
+                connectionReadyDeferred?.let {
+                    if (!it.isCompleted) {
+                        it.complete(false)
+                    }
+                }
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                Log.d(TAG, "WebSocket closed: $code - $reason")
+                connectionReadyDeferred?.let {
+                    if (!it.isCompleted) {
+                        it.complete(false)
+                    }
+                }
             }
         })
-        return true
+        val readyDeferred = connectionReadyDeferred ?: return false
+        val awaitedResult = withTimeoutOrNull(timeoutMs) { readyDeferred.await() }
+        val connected = awaitedResult ?: false
+
+        if (!connected) {
+            if (awaitedResult == null) {
+                Log.e(TAG, "WebSocket signaling connection timed out after ${timeoutMs}ms")
+            } else {
+                Log.e(TAG, "WebSocket signaling subscription failed")
+            }
+            disconnect()
+        }
+
+        return connected
     }
 
     private fun subscribeToChannel() {
@@ -124,6 +156,24 @@ class SignalingClient(
         try {
             val json = gson.fromJson(message, JsonObject::class.java)
             val event = json.get("event")?.asString ?: return
+            if (event == EVENT_SUBSCRIPTION_SUCCEEDED_INTERNAL || event == EVENT_SUBSCRIPTION_SUCCEEDED) {
+                Log.d(TAG, "WebSocket channel subscription succeeded for camera $cameraId")
+                connectionReadyDeferred?.let {
+                    if (!it.isCompleted) {
+                        it.complete(true)
+                    }
+                }
+                return
+            }
+            if (event == EVENT_PUSHER_ERROR) {
+                connectionReadyDeferred?.let {
+                    if (!it.isCompleted) {
+                        it.complete(false)
+                    }
+                }
+                return
+            }
+
             val data = json.get("data")?.asJsonObject
 
             when (event) {
@@ -280,6 +330,12 @@ class SignalingClient(
     }
 
     fun disconnect() {
+        connectionReadyDeferred?.let {
+            if (!it.isCompleted) {
+                it.complete(false)
+            }
+        }
+        connectionReadyDeferred = null
         webSocket?.close(1000, "Client disconnecting")
         webSocket = null
     }

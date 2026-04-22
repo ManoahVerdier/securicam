@@ -28,6 +28,8 @@ import com.securicam.camera.ui.MainActivity
 import com.securicam.camera.webrtc.WebRtcClient
 import com.securicam.camera.api.SignalingClient
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -59,6 +61,7 @@ class CameraService : LifecycleService() {
     private var authToken: String = ""
     private var cameraId: Int = 0
     private var isStreamStarting: Boolean = false
+    private val signalingConnectMutex = Mutex()
     
     var isStreaming: Boolean = false
         private set
@@ -155,50 +158,65 @@ class CameraService : LifecycleService() {
     }
 
     private fun connectSignalingIfNeeded() {
-        if (signalingClient != null) {
-            return
+        serviceScope.launch {
+            if (!ensureSignalingConnected()) {
+                Log.w(TAG, "Signaling connection is not ready")
+            }
         }
+    }
+
+    private suspend fun ensureSignalingConnected(): Boolean = signalingConnectMutex.withLock {
+        signalingClient?.let { return@withLock true }
 
         if (serverUrl.isEmpty() || authToken.isEmpty() || cameraId == 0) {
             Log.w(TAG, "Cannot connect signaling: missing configuration")
-            return
+            return@withLock false
         }
 
         val client = SignalingClient(serverUrl, authToken, cameraId)
-        val connected = client.connect(
-            onOffer = { _ ->
-                // Viewer answers camera offers in this flow, so incoming offers are ignored.
-            },
-            onAnswer = { sdp ->
-                webRtcClient?.handleAnswer(sdp)
-            },
-            onIceCandidate = { candidate ->
-                webRtcClient?.addIceCandidate(candidate)
-            },
-            onCapturePhoto = {
-                capturePhoto()
-            },
-            onStartStreaming = {
-                startStreamingIfNeeded()
-            },
-            onStopStreaming = {
-                stopStreaming(keepReady = true)
-            },
-            onStartRecording = {
-                startRecording()
-            },
-            onStopRecording = {
-                stopRecording()
-            },
-            onError = { error ->
-                Log.e(TAG, "Signaling error: $error")
-            }
-        )
-        if (connected) {
+        val isConnected = try {
+            client.connect(
+                onOffer = { _ ->
+                    // Viewer answers camera offers in this flow, so incoming offers are ignored.
+                },
+                onAnswer = { sdp ->
+                    webRtcClient?.handleAnswer(sdp)
+                },
+                onIceCandidate = { candidate ->
+                    webRtcClient?.addIceCandidate(candidate)
+                },
+                onCapturePhoto = {
+                    capturePhoto()
+                },
+                onStartStreaming = {
+                    startStreamingIfNeeded()
+                },
+                onStopStreaming = {
+                    stopStreaming(keepReady = true)
+                },
+                onStartRecording = {
+                    startRecording()
+                },
+                onStopRecording = {
+                    stopRecording()
+                },
+                onError = { error ->
+                    Log.e(TAG, "Signaling error: $error")
+                }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Signaling connection failed", e)
+            false
+        }
+
+        if (isConnected) {
             signalingClient = client
         } else {
+            client.disconnect()
             signalingClient = null
         }
+
+        return@withLock isConnected
     }
 
     private fun disconnectSignaling() {
@@ -251,6 +269,11 @@ class CameraService : LifecycleService() {
 
         serviceScope.launch {
             try {
+                val isSignalingReady = ensureSignalingConnected()
+                if (!isSignalingReady) {
+                    throw IllegalStateException("Signaling is not connected")
+                }
+
                 // Initialize WebRTC
                 webRtcClient = WebRtcClient(applicationContext, cameraProvider!!, this@CameraService)
                 
