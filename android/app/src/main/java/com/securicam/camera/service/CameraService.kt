@@ -91,6 +91,9 @@ class CameraService : LifecycleService() {
                 loadConfiguration(intent)
                 startForegroundService()
                 connectSignalingIfNeeded()
+                serviceScope.launch {
+                    updateStatus("online")
+                }
                 startStreamingIfNeeded()
             }
             ACTION_STOP -> {
@@ -273,6 +276,8 @@ class CameraService : LifecycleService() {
                 if (!isSignalingReady) {
                     throw IllegalStateException("Signaling is not connected")
                 }
+
+                updateStatus("online")
 
                 // Initialize WebRTC
                 webRtcClient = WebRtcClient(applicationContext, cameraProvider!!, this@CameraService)

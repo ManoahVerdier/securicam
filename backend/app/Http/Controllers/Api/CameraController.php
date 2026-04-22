@@ -10,6 +10,36 @@ use Illuminate\Http\Request;
 class CameraController extends Controller
 {
     /**
+     * Initialize camera status by device_id.
+     */
+    public function initStatus(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'device_id' => ['required', 'string', 'exists:cameras,device_id'],
+            'status' => ['required', 'string', 'in:offline,online,streaming,recording'],
+        ]);
+
+        $camera = Camera::query()
+            ->where('device_id', $validated['device_id'])
+            ->firstOrFail();
+
+        $authenticatedUser = auth('sanctum')->user();
+        if ($authenticatedUser && $authenticatedUser->id !== $camera->user_id) {
+            abort(403);
+        }
+
+        $camera->update([
+            'status' => $validated['status'],
+            'last_seen_at' => now(),
+        ]);
+
+        return response()->json([
+            'message' => 'Camera status initialized',
+            'camera' => $camera,
+        ]);
+    }
+
+    /**
      * Display a listing of cameras for the authenticated user.
      */
     public function index(Request $request): JsonResponse
