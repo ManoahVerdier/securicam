@@ -20,7 +20,6 @@ use Illuminate\Support\Facades\Route;
 // Public routes
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
-Route::post('/cameras/init-status', [CameraController::class, 'initStatus']);
 
 // Protected routes
 Route::middleware('auth:sanctum')->group(function () {
@@ -31,6 +30,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Cameras
     Route::apiResource('cameras', CameraController::class);
+    Route::post('/cameras/init-status', [CameraController::class, 'initStatus']);
     Route::patch('/cameras/{camera}/status', [CameraController::class, 'updateStatus']);
 
     // WebRTC signaling

@@ -15,17 +15,19 @@ class CameraController extends Controller
     public function initStatus(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'device_id' => ['required', 'string', 'exists:cameras,device_id'],
+            'device_id' => ['required', 'string', 'max:255'],
             'status' => ['required', 'string', 'in:offline,online,streaming,recording'],
         ]);
 
-        $camera = Camera::query()
+        $camera = $request->user()
+            ->cameras()
             ->where('device_id', $validated['device_id'])
-            ->firstOrFail();
+            ->first();
 
-        $authenticatedUser = auth('sanctum')->user();
-        if ($authenticatedUser && $authenticatedUser->id !== $camera->user_id) {
-            abort(403);
+        if (!$camera) {
+            return response()->json([
+                'message' => 'Camera not found',
+            ], 404);
         }
 
         $camera->update([
