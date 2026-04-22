@@ -32,7 +32,7 @@ class SignalingClient(
     private val gson = Gson()
     private var webSocket: WebSocket? = null
     private val normalizedServerUrl: String? = normalizeServerUrl(serverUrl)
-    
+
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -338,7 +338,7 @@ class SignalingClient(
 
     private fun makeRequest(url: String, body: JsonObject, method: String = "POST"): Boolean {
         val requestBody = gson.toJson(body).toRequestBody(JSON_MEDIA_TYPE)
-        
+
         val request = Request.Builder()
             .url(url)
             .addHeader("Authorization", "Bearer $authToken")
