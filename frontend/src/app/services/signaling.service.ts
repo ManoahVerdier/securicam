@@ -27,16 +27,18 @@ export class SignalingService implements OnDestroy {
 
   connect(): void {
     if (this.echo) {
+      console.info('[Signaling] WebSocket already initialized');
       return;
     }
 
     const token = this.authService.getToken();
     if (!token) {
-      console.error('No auth token available');
+      console.error('[Signaling] No auth token available');
       return;
     }
 
     try {
+      console.info('[Signaling] Initializing WebSocket connection');
       (window as any).Pusher = Pusher;
 
       // Initialize Laravel Echo with Pusher/Reverb
@@ -56,16 +58,42 @@ export class SignalingService implements OnDestroy {
         }
       });
 
-      this.echo.connector.pusher.connection.bind('connected', () => {
+      const connection = this.echo.connector.pusher.connection;
+
+      connection.bind('connecting', () => {
+        console.info('[Signaling] WebSocket connecting');
+      });
+
+      connection.bind('connected', () => {
+        console.info('[Signaling] WebSocket connected');
         this.connectionStatusSubject.next(true);
       });
 
-      this.echo.connector.pusher.connection.bind('disconnected', () => {
+      connection.bind('disconnected', () => {
+        console.warn('[Signaling] WebSocket disconnected');
         this.connectionStatusSubject.next(false);
       });
 
+      connection.bind('unavailable', () => {
+        console.error('[Signaling] WebSocket unavailable');
+        this.connectionStatusSubject.next(false);
+      });
+
+      connection.bind('failed', () => {
+        console.error('[Signaling] WebSocket failed');
+        this.connectionStatusSubject.next(false);
+      });
+
+      connection.bind('state_change', (states: { previous: string; current: string }) => {
+        console.info(`[Signaling] WebSocket state: ${states.previous} -> ${states.current}`);
+      });
+
+      connection.bind('error', (error: unknown) => {
+        console.error('[Signaling] WebSocket error', error);
+        this.connectionStatusSubject.next(false);
+      });
     } catch (error) {
-      console.error('Failed to initialize Echo:', error);
+      console.error('[Signaling] Failed to initialize Echo', error);
     }
   }
 
@@ -81,20 +109,27 @@ export class SignalingService implements OnDestroy {
 
   joinCameraChannel(cameraId: number): void {
     if (!this.echo || this.channels.has(cameraId)) {
+      if (!this.echo) {
+        console.warn(`[Signaling] Cannot join camera.${cameraId}: WebSocket not connected`);
+      }
       return;
     }
 
+    console.info(`[Signaling] Joining camera.${cameraId} channel`);
     const channel = this.echo.private(`camera.${cameraId}`);
 
     channel.listen('.webrtc.offer', (data: WebRtcOffer) => {
+      console.info(`[Signaling] Offer received for camera ${cameraId}`);
       this.offerSubject.next(data);
     });
 
     channel.listen('.webrtc.answer', (data: WebRtcAnswer) => {
+      console.info(`[Signaling] Answer received for camera ${cameraId}`);
       this.answerSubject.next(data);
     });
 
     channel.listen('.webrtc.ice-candidate', (data: WebRtcIceCandidate) => {
+      console.info(`[Signaling] ICE candidate received for camera ${cameraId}`);
       this.iceCandidateSubject.next(data);
     });
 
@@ -103,6 +138,7 @@ export class SignalingService implements OnDestroy {
 
   leaveChannel(cameraId: number): void {
     if (this.echo && this.channels.has(cameraId)) {
+      console.info(`[Signaling] Leaving camera.${cameraId} channel`);
       this.echo.leave(`camera.${cameraId}`);
       this.channels.delete(cameraId);
     }

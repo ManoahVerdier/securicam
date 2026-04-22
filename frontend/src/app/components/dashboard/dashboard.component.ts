@@ -50,7 +50,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
         // Auto-select first camera if available
         if (this.cameras.length > 0 && !this.selectedCamera) {
-          this.selectCamera(this.cameras[0]);
+          const firstAvailableCamera = this.cameras.find(camera => camera.status !== 'offline');
+          this.selectCamera(firstAvailableCamera ?? this.cameras[0]);
         }
       },
       error: () => {

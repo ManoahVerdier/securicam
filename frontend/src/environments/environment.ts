@@ -2,7 +2,7 @@ export const environment = {
   production: false,
   apiUrl: 'http://localhost:8000/api',
   wsHost: 'localhost',
-  wsPort: 8080,
+  wsPort: 8081,
   wsKey: 'securicam-app-key',
   wsScheme: 'http',
   iceServers: [

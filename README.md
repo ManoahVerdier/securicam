@@ -140,7 +140,7 @@ docker-compose exec backend php artisan migrate
 
 - **Frontend Angular** : http://localhost:4200
 - **API Laravel** : http://localhost:8000
-- **WebSocket Reverb** : ws://localhost:8080
+- **WebSocket Reverb** : ws://localhost:8081
 
 ### Compiler l'application Android
 
