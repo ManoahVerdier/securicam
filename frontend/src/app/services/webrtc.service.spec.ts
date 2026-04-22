@@ -55,11 +55,14 @@ describe('WebrtcService', () => {
     (globalThis as any).RTCPeerConnection = originalPeerConnection;
   });
 
-  it('waits for camera readiness before creating peer connection', fakeAsync(() => {
+  it('creates peer connection before requesting stream start', fakeAsync(() => {
     let completed = false;
     service.connectToCamera(1).then(() => {
       completed = true;
     });
+
+    expect(signalingService.joinCameraChannel).toHaveBeenCalledWith(1);
+    expect((service as any).peerConnections.has(1)).toBeTrue();
 
     const startRequest = httpMock.expectOne(`${environment.apiUrl}/webrtc/start`);
     expect(startRequest.request.method).toBe('POST');
@@ -77,8 +80,6 @@ describe('WebrtcService', () => {
     flushMicrotasks();
 
     expect(completed).toBeTrue();
-    expect(signalingService.joinCameraChannel).toHaveBeenCalledWith(1);
-    expect((service as any).peerConnections.has(1)).toBeTrue();
   }));
 
   it('should continue polling and create connection when stream start returns 422 but camera becomes ready', fakeAsync(() => {
