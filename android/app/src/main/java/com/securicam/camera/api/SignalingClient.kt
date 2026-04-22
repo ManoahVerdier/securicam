@@ -48,6 +48,7 @@ class SignalingClient(
     private var onStartRecordingCallback: (() -> Unit)? = null
     private var onStopRecordingCallback: (() -> Unit)? = null
     private var connectionReadyDeferred: CompletableDeferred<Boolean>? = null
+    private var socketId: String? = null
 
     suspend fun connect(
         onOffer: (String) -> Unit,
@@ -94,8 +95,7 @@ class SignalingClient(
 
         webSocket = httpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                Log.d(TAG, "WebSocket connected")
-                subscribeToChannel()
+                Log.d(TAG, "WebSocket connected, waiting for connection_established")
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -141,38 +141,79 @@ class SignalingClient(
         return connected
     }
 
-    private fun subscribeToChannel() {
-        val subscribeMessage = JsonObject().apply {
-            addProperty("event", "pusher:subscribe")
-            add("data", JsonObject().apply {
-                addProperty("channel", "private-camera.$cameraId")
-                addProperty("auth", authToken)
-            })
+    private fun performAuthAndSubscribe() {
+        val sid = socketId ?: run {
+            Log.e(TAG, "performAuthAndSubscribe called without socket_id")
+            connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
+            return
         }
-        webSocket?.send(gson.toJson(subscribeMessage))
+        val channelName = "private-camera.$cameraId"
+        val authUrl = buildBroadcastingAuthUrl() ?: run {
+            Log.e(TAG, "Cannot build broadcasting/auth URL from '$serverUrl'")
+            connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
+            return
+        }
+
+        val formBody = okhttp3.FormBody.Builder()
+            .add("socket_id", sid)
+            .add("channel_name", channelName)
+            .build()
+
+        val request = Request.Builder()
+            .url(authUrl)
+            .post(formBody)
+            .addHeader("Authorization", "Bearer $authToken")
+            .addHeader("Accept", "application/json")
+            .build()
+
+        try {
+            val response = httpClient.newCall(request).execute()
+            if (response.isSuccessful) {
+                val body = response.body?.string()
+                val authJson = gson.fromJson(body, JsonObject::class.java)
+                val auth = authJson?.get("auth")?.asString
+                if (auth != null) {
+                    val subscribeMessage = JsonObject().apply {
+                        addProperty("event", "pusher:subscribe")
+                        add("data", JsonObject().apply {
+                            addProperty("channel", channelName)
+                            addProperty("auth", auth)
+                        })
+                    }
+                    webSocket?.send(gson.toJson(subscribeMessage))
+                    Log.d(TAG, "Subscribed to $channelName with proper auth")
+                } else {
+                    Log.e(TAG, "No auth field in broadcasting/auth response: $body")
+                    connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
+                }
+            } else {
+                Log.e(TAG, "broadcasting/auth failed: ${response.code} - ${response.body?.string()}")
+                connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error calling broadcasting/auth", e)
+            connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
+        }
+    }
+
+    private fun buildBroadcastingAuthUrl(): String? {
+        val baseUrl = normalizedServerUrl ?: return null
+        val parsed = baseUrl.toHttpUrlOrNull() ?: return null
+        val pathSegments = parsed.pathSegments.filter { it.isNotEmpty() }.toMutableList()
+        if (pathSegments.lastOrNull() == "api") {
+            pathSegments.removeAt(pathSegments.lastIndex)
+        }
+        val builder = parsed.newBuilder().encodedPath("/")
+        pathSegments.forEach { builder.addPathSegment(it) }
+        builder.addPathSegment("broadcasting")
+        builder.addPathSegment("auth")
+        return builder.build().toString()
     }
 
     private fun handleMessage(message: String) {
         try {
             val json = gson.fromJson(message, JsonObject::class.java)
             val event = json.get("event")?.asString ?: return
-            if (event == EVENT_SUBSCRIPTION_SUCCEEDED_INTERNAL || event == EVENT_SUBSCRIPTION_SUCCEEDED) {
-                Log.d(TAG, "WebSocket channel subscription succeeded for camera $cameraId")
-                connectionReadyDeferred?.let {
-                    if (!it.isCompleted) {
-                        it.complete(true)
-                    }
-                }
-                return
-            }
-            if (event == EVENT_PUSHER_ERROR) {
-                connectionReadyDeferred?.let {
-                    if (!it.isCompleted) {
-                        it.complete(false)
-                    }
-                }
-                return
-            }
 
             val data = json.get("data")?.let { dataElement ->
                 try {
@@ -189,6 +230,25 @@ class SignalingClient(
             }
 
             when (event) {
+                "pusher:connection_established" -> {
+                    val sid = data?.get("socket_id")?.asString
+                    Log.d(TAG, "Connection established, socket_id=$sid")
+                    if (sid != null) {
+                        socketId = sid
+                        performAuthAndSubscribe()
+                    } else {
+                        Log.e(TAG, "pusher:connection_established missing socket_id")
+                        connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
+                    }
+                }
+                EVENT_SUBSCRIPTION_SUCCEEDED_INTERNAL, EVENT_SUBSCRIPTION_SUCCEEDED -> {
+                    Log.d(TAG, "WebSocket channel subscription succeeded for camera $cameraId")
+                    connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(true) }
+                }
+                EVENT_PUSHER_ERROR -> {
+                    Log.e(TAG, "Pusher error: $message")
+                    connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
+                }
                 "webrtc.offer" -> {
                     data?.get("sdp")?.asString?.let { onOfferCallback?.invoke(it) }
                 }
