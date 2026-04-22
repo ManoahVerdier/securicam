@@ -54,6 +54,8 @@ export class WebrtcService implements OnDestroy {
     // Close existing connection if any
     this.disconnectFromCamera(cameraId);
 
+    this.requestStreamStart(cameraId);
+
     // Create peer connection
     const pc = new RTCPeerConnection({
       iceServers: environment.iceServers
@@ -93,6 +95,14 @@ export class WebrtcService implements OnDestroy {
 
     // Join the signaling channel
     this.signalingService.joinCameraChannel(cameraId);
+  }
+
+  private requestStreamStart(cameraId: number): void {
+    this.http.post(`${environment.apiUrl}/webrtc/start`, {
+      camera_id: cameraId
+    }).subscribe({
+      error: (error) => console.error('Error requesting camera stream start:', error)
+    });
   }
 
   disconnectFromCamera(cameraId: number): void {

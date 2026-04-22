@@ -34,6 +34,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // WebRTC signaling
     Route::prefix('webrtc')->group(function () {
+        Route::post('/start', [WebRtcController::class, 'start']);
         Route::post('/offer', [WebRtcController::class, 'offer']);
         Route::post('/answer', [WebRtcController::class, 'answer']);
         Route::post('/ice-candidate', [WebRtcController::class, 'iceCandidate']);

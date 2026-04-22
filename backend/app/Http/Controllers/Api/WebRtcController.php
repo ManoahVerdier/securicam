@@ -7,11 +7,37 @@ use App\Models\Camera;
 use App\Events\WebRtcOffer;
 use App\Events\WebRtcAnswer;
 use App\Events\WebRtcIceCandidate;
+use App\Events\VideoStreamingStart;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class WebRtcController extends Controller
 {
+    /**
+     * Request camera to start video streaming.
+     */
+    public function start(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'camera_id' => ['required', 'exists:cameras,id'],
+        ]);
+
+        $camera = Camera::findOrFail($validated['camera_id']);
+        $this->authorize('update', $camera);
+
+        if (!$camera->isOnline()) {
+            return response()->json([
+                'message' => 'Camera is offline',
+            ], 422);
+        }
+
+        broadcast(new VideoStreamingStart($camera->id))->toOthers();
+
+        return response()->json([
+            'message' => 'Streaming start requested',
+        ]);
+    }
+
     /**
      * Receive WebRTC offer from camera (Android app).
      */
