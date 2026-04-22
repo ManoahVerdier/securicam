@@ -37,6 +37,7 @@ class CameraService : LifecycleService() {
         private const val TAG = "CameraService"
         const val NOTIFICATION_ID = 1001
 
+        const val ACTION_PREPARE = "com.securicam.camera.action.PREPARE"
         const val ACTION_START = "com.securicam.camera.action.START"
         const val ACTION_STOP = "com.securicam.camera.action.STOP"
 
@@ -57,6 +58,7 @@ class CameraService : LifecycleService() {
     private var serverUrl: String = ""
     private var authToken: String = ""
     private var cameraId: Int = 0
+    private var isStreamStarting: Boolean = false
     
     var isStreaming: Boolean = false
         private set
@@ -74,16 +76,23 @@ class CameraService : LifecycleService() {
         super.onStartCommand(intent, flags, startId)
 
         when (intent?.action) {
-            ACTION_START -> {
-                serverUrl = intent.getStringExtra(EXTRA_SERVER_URL) ?: ""
-                authToken = intent.getStringExtra(EXTRA_AUTH_TOKEN) ?: ""
-                cameraId = intent.getIntExtra(EXTRA_CAMERA_ID, 0)
-                
+            ACTION_PREPARE -> {
+                loadConfiguration(intent)
                 startForegroundService()
-                initializeCamera()
+                connectSignalingIfNeeded()
+                serviceScope.launch {
+                    updateStatus("online")
+                }
+            }
+            ACTION_START -> {
+                loadConfiguration(intent)
+                startForegroundService()
+                connectSignalingIfNeeded()
+                startStreamingIfNeeded()
             }
             ACTION_STOP -> {
-                stopStreaming()
+                stopStreaming(keepReady = false)
+                disconnectSignaling()
                 stopSelf()
             }
         }
@@ -123,7 +132,13 @@ class CameraService : LifecycleService() {
 
         return NotificationCompat.Builder(this, SecuricamApp.NOTIFICATION_CHANNEL_ID)
             .setContentTitle("Securicam")
-            .setContentText("Camera is streaming...")
+            .setContentText(
+                when {
+                    isStreaming -> "Camera is streaming..."
+                    isStreamStarting -> "Camera is starting stream..."
+                    else -> "Camera is ready to stream"
+                }
+            )
             .setSmallIcon(R.drawable.ic_camera)
             .setContentIntent(pendingIntent)
             .addAction(R.drawable.ic_stop, "Stop", stopIntent)
@@ -133,14 +148,81 @@ class CameraService : LifecycleService() {
             .build()
     }
 
+    private fun loadConfiguration(intent: Intent) {
+        serverUrl = intent.getStringExtra(EXTRA_SERVER_URL) ?: ""
+        authToken = intent.getStringExtra(EXTRA_AUTH_TOKEN) ?: ""
+        cameraId = intent.getIntExtra(EXTRA_CAMERA_ID, 0)
+    }
+
+    private fun connectSignalingIfNeeded() {
+        if (signalingClient != null) {
+            return
+        }
+
+        if (serverUrl.isEmpty() || authToken.isEmpty() || cameraId == 0) {
+            Log.w(TAG, "Cannot connect signaling: missing configuration")
+            return
+        }
+
+        signalingClient = SignalingClient(serverUrl, authToken, cameraId).also { client ->
+            client.connect(
+                onOffer = { _ ->
+                    // Viewer answers camera offers in this flow, so incoming offers are ignored.
+                },
+                onAnswer = { sdp ->
+                    webRtcClient?.handleAnswer(sdp)
+                },
+                onIceCandidate = { candidate ->
+                    webRtcClient?.addIceCandidate(candidate)
+                },
+                onCapturePhoto = {
+                    capturePhoto()
+                },
+                onStartStreaming = {
+                    startStreamingIfNeeded()
+                },
+                onStopStreaming = {
+                    stopStreaming(keepReady = true)
+                },
+                onStartRecording = {
+                    startRecording()
+                },
+                onStopRecording = {
+                    stopRecording()
+                }
+            )
+        }
+    }
+
+    private fun disconnectSignaling() {
+        signalingClient?.disconnect()
+        signalingClient = null
+    }
+
+    private fun startStreamingIfNeeded() {
+        if (isStreaming || isStreamStarting) {
+            return
+        }
+        isStreamStarting = true
+        initializeCamera()
+    }
+
     private fun initializeCamera() {
         if (!hasCameraPermission()) {
             Log.e(TAG, "Camera permission not granted")
+            isStreamStarting = false
             stopSelf()
             return
         }
 
-        cameraExecutor = Executors.newSingleThreadExecutor()
+        if (cameraProvider != null) {
+            startWebRtcStreaming()
+            return
+        }
+
+        if (cameraExecutor == null) {
+            cameraExecutor = Executors.newSingleThreadExecutor()
+        }
 
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
@@ -149,6 +231,7 @@ class CameraService : LifecycleService() {
                 startWebRtcStreaming()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to get camera provider", e)
+                isStreamStarting = false
             }
         }, ContextCompat.getMainExecutor(this))
     }
@@ -163,31 +246,6 @@ class CameraService : LifecycleService() {
             try {
                 // Initialize WebRTC
                 webRtcClient = WebRtcClient(applicationContext, cameraProvider!!, this@CameraService)
-                
-                // Initialize signaling
-                signalingClient = SignalingClient(serverUrl, authToken, cameraId)
-                
-                // Connect signaling
-                signalingClient?.connect(
-                    onOffer = { sdp -> 
-                        // Handle incoming offer (for renegotiation)
-                    },
-                    onAnswer = { sdp ->
-                        webRtcClient?.handleAnswer(sdp)
-                    },
-                    onIceCandidate = { candidate ->
-                        webRtcClient?.addIceCandidate(candidate)
-                    },
-                    onCapturePhoto = {
-                        capturePhoto()
-                    },
-                    onStartRecording = {
-                        startRecording()
-                    },
-                    onStopRecording = {
-                        stopRecording()
-                    }
-                )
                 
                 // Create and send offer
                 webRtcClient?.createOffer { sdp ->
@@ -204,28 +262,30 @@ class CameraService : LifecycleService() {
                 }
                 
                 isStreaming = true
+                isStreamStarting = false
                 updateStatus("streaming")
                 
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start WebRTC streaming", e)
                 isStreaming = false
+                isStreamStarting = false
             }
         }
     }
 
-    private fun stopStreaming() {
+    private fun stopStreaming(keepReady: Boolean) {
         serviceScope.launch {
             isStreaming = false
-            updateStatus("offline")
+            isStreamStarting = false
+            updateStatus(if (keepReady) "online" else "offline")
             
             webRtcClient?.release()
             webRtcClient = null
-            
-            signalingClient?.disconnect()
-            signalingClient = null
-            
+
             cameraProvider?.unbindAll()
             cameraExecutor?.shutdown()
+            cameraExecutor = null
+            cameraProvider = null
         }
     }
     
@@ -259,7 +319,8 @@ class CameraService : LifecycleService() {
     }
 
     override fun onDestroy() {
-        stopStreaming()
+        stopStreaming(keepReady = false)
+        disconnectSignaling()
         serviceScope.cancel()
         super.onDestroy()
     }

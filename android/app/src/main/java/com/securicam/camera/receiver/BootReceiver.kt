@@ -50,7 +50,7 @@ class BootReceiver : BroadcastReceiver() {
         cameraId: Int
     ) {
         val serviceIntent = Intent(context, CameraService::class.java).apply {
-            action = CameraService.ACTION_START
+            action = CameraService.ACTION_PREPARE
             putExtra(CameraService.EXTRA_SERVER_URL, serverUrl)
             putExtra(CameraService.EXTRA_AUTH_TOKEN, authToken)
             putExtra(CameraService.EXTRA_CAMERA_ID, cameraId)
@@ -62,7 +62,7 @@ class BootReceiver : BroadcastReceiver() {
             } else {
                 context.startService(serviceIntent)
             }
-            Log.d(TAG, "Camera service started on boot")
+            Log.d(TAG, "Camera service prepared on boot")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start camera service", e)
         }

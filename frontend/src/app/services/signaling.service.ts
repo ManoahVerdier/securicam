@@ -1,11 +1,10 @@
 import { Injectable, OnDestroy } from '@angular/core';
 import { Subject, Observable } from 'rxjs';
+import Echo from 'laravel-echo';
+import Pusher from 'pusher-js';
 import { environment } from '../../environments/environment';
 import { AuthService } from './auth.service';
-import { WebRtcOffer, WebRtcAnswer, WebRtcIceCandidate, WebRtcSignalMessage } from '../models';
-
-declare const Pusher: any;
-declare const Echo: any;
+import { WebRtcOffer, WebRtcAnswer, WebRtcIceCandidate } from '../models';
 
 @Injectable({
   providedIn: 'root'
@@ -38,6 +37,8 @@ export class SignalingService implements OnDestroy {
     }
 
     try {
+      (window as any).Pusher = Pusher;
+
       // Initialize Laravel Echo with Pusher/Reverb
       this.echo = new Echo({
         broadcaster: 'reverb',

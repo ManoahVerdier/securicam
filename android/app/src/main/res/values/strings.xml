@@ -16,7 +16,7 @@
     
     <!-- Auto-start -->
     <string name="auto_start_title">Auto-start on boot</string>
-    <string name="auto_start_description">Automatically start streaming when device boots</string>
+    <string name="auto_start_description">Automatically prepare camera service on boot (stream starts from web viewer)</string>
     
     <!-- Buttons -->
     <string name="start_streaming">Start Streaming</string>

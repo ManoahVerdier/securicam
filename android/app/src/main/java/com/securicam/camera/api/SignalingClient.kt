@@ -36,6 +36,8 @@ class SignalingClient(
     private var onAnswerCallback: ((String) -> Unit)? = null
     private var onIceCandidateCallback: ((String) -> Unit)? = null
     private var onCapturePhotoCallback: (() -> Unit)? = null
+    private var onStartStreamingCallback: (() -> Unit)? = null
+    private var onStopStreamingCallback: (() -> Unit)? = null
     private var onStartRecordingCallback: (() -> Unit)? = null
     private var onStopRecordingCallback: (() -> Unit)? = null
 
@@ -44,6 +46,8 @@ class SignalingClient(
         onAnswer: (String) -> Unit,
         onIceCandidate: (String) -> Unit,
         onCapturePhoto: () -> Unit,
+        onStartStreaming: () -> Unit,
+        onStopStreaming: () -> Unit,
         onStartRecording: () -> Unit,
         onStopRecording: () -> Unit
     ) {
@@ -51,6 +55,8 @@ class SignalingClient(
         onAnswerCallback = onAnswer
         onIceCandidateCallback = onIceCandidate
         onCapturePhotoCallback = onCapturePhoto
+        onStartStreamingCallback = onStartStreaming
+        onStopStreamingCallback = onStopStreaming
         onStartRecordingCallback = onStartRecording
         onStopRecordingCallback = onStopRecording
 
@@ -118,6 +124,12 @@ class SignalingClient(
                 }
                 "capture.photo" -> {
                     onCapturePhotoCallback?.invoke()
+                }
+                "video.streaming.start" -> {
+                    onStartStreamingCallback?.invoke()
+                }
+                "video.streaming.stop" -> {
+                    onStopStreamingCallback?.invoke()
                 }
                 "video.recording.start" -> {
                     onStartRecordingCallback?.invoke()
