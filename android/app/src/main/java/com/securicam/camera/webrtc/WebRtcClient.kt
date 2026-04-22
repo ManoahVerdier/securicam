@@ -85,6 +85,8 @@ class WebRtcClient(
 
         // Create video source
         localVideoSource = factory.createVideoSource(false)
+        val videoSource = localVideoSource
+            ?: throw IllegalStateException("Failed to create local video source")
         
         // Create video capturer
         val eglBaseContext = eglBase?.eglBaseContext
@@ -93,18 +95,20 @@ class WebRtcClient(
             ?: throw IllegalStateException("Failed to create SurfaceTextureHelper")
         
         videoCapturer = createCameraCapturer()
-            ?: throw IllegalStateException("No camera capturer available. Camera hardware may be missing or inaccessible.")
+            ?: throw IllegalStateException(
+                "No camera capturer available. Verify camera permission is granted and camera hardware is not in use by another app."
+            )
 
-        videoCapturer?.initialize(surfaceTextureHelper, context, localVideoSource?.capturerObserver)
         try {
+            videoCapturer?.initialize(surfaceTextureHelper, context, videoSource.capturerObserver)
             videoCapturer?.startCapture(1280, 720, 30)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to start camera capture", e)
-            throw IllegalStateException("Failed to start camera capture", e)
+            Log.e(TAG, "Failed to initialize or start camera capture", e)
+            throw IllegalStateException("Failed to initialize or start camera capture", e)
         }
         
         // Create video track
-        localVideoTrack = factory.createVideoTrack("video_track", localVideoSource)
+        localVideoTrack = factory.createVideoTrack("video_track", videoSource)
         localVideoTrack?.setEnabled(true)
         
         // Create audio source and track
@@ -282,22 +286,8 @@ class WebRtcClient(
     fun release() {
         executor.execute {
             try {
-                videoCapturer?.stopCapture()
-                videoCapturer?.dispose()
-                
-                localVideoTrack?.dispose()
-                localAudioTrack?.dispose()
-                
-                localVideoSource?.dispose()
-                localAudioSource?.dispose()
-                
-                surfaceTextureHelper?.dispose()
-                
-                peerConnection?.close()
-                peerConnection?.dispose()
-                
-                peerConnectionFactory?.dispose()
-                eglBase?.release()
+                stopCaptureSafely()
+                releaseResources()
                 
                 Log.d(TAG, "WebRTC resources released")
             } catch (e: Exception) {
@@ -308,23 +298,30 @@ class WebRtcClient(
 
     private fun cleanupAfterInitializationFailure() {
         try {
-            videoCapturer?.stopCapture()
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to stop capturer during initialization cleanup", e)
-        }
-        try {
-            videoCapturer?.dispose()
-            localVideoTrack?.dispose()
-            localAudioTrack?.dispose()
-            localVideoSource?.dispose()
-            localAudioSource?.dispose()
-            surfaceTextureHelper?.dispose()
-            peerConnection?.close()
-            peerConnection?.dispose()
-            peerConnectionFactory?.dispose()
-            eglBase?.release()
+            releaseResources()
         } catch (e: Exception) {
             Log.w(TAG, "Failed to clean up WebRTC resources after initialization error", e)
         }
+    }
+
+    private fun stopCaptureSafely() {
+        try {
+            videoCapturer?.stopCapture()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to stop capturer", e)
+        }
+    }
+
+    private fun releaseResources() {
+        videoCapturer?.dispose()
+        localVideoTrack?.dispose()
+        localAudioTrack?.dispose()
+        localVideoSource?.dispose()
+        localAudioSource?.dispose()
+        surfaceTextureHelper?.dispose()
+        peerConnection?.close()
+        peerConnection?.dispose()
+        peerConnectionFactory?.dispose()
+        eglBase?.release()
     }
 }

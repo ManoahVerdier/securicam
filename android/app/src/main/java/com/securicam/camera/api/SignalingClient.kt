@@ -164,8 +164,11 @@ class SignalingClient(
             addProperty("type", "offer")
         }
 
-        val url = buildApiUrl("/webrtc/offer") ?: return@withContext false
-        makeRequest(url, body)
+        val url = buildApiUrl("/webrtc/offer") ?: run {
+            Log.e(TAG, "Failed to send offer: invalid server URL '$serverUrl'")
+            return@withContext false
+        }
+        return@withContext makeRequest(url, body)
     }
 
     suspend fun sendAnswer(sdp: String) = withContext(Dispatchers.IO) {
@@ -175,8 +178,11 @@ class SignalingClient(
             addProperty("type", "answer")
         }
 
-        val url = buildApiUrl("/webrtc/answer") ?: return@withContext false
-        makeRequest(url, body)
+        val url = buildApiUrl("/webrtc/answer") ?: run {
+            Log.e(TAG, "Failed to send answer: invalid server URL '$serverUrl'")
+            return@withContext false
+        }
+        return@withContext makeRequest(url, body)
     }
 
     suspend fun sendIceCandidate(candidate: IceCandidate) = withContext(Dispatchers.IO) {
@@ -189,8 +195,11 @@ class SignalingClient(
             })
         }
 
-        val url = buildApiUrl("/webrtc/ice-candidate") ?: return@withContext false
-        makeRequest(url, body)
+        val url = buildApiUrl("/webrtc/ice-candidate") ?: run {
+            Log.e(TAG, "Failed to send ICE candidate: invalid server URL '$serverUrl'")
+            return@withContext false
+        }
+        return@withContext makeRequest(url, body)
     }
 
     suspend fun updateCameraStatus(status: String) = withContext(Dispatchers.IO) {
@@ -198,8 +207,11 @@ class SignalingClient(
             addProperty("status", status)
         }
 
-        val url = buildApiUrl("/cameras/$cameraId/status") ?: return@withContext false
-        makeRequest(url, body, "PATCH")
+        val url = buildApiUrl("/cameras/$cameraId/status") ?: run {
+            Log.e(TAG, "Failed to update camera status: invalid server URL '$serverUrl'")
+            return@withContext false
+        }
+        return@withContext makeRequest(url, body, "PATCH")
     }
 
     private fun makeRequest(url: String, body: JsonObject, method: String = "POST"): Boolean {
@@ -262,13 +274,9 @@ class SignalingClient(
             return null
         }
 
-        val withScheme = if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) {
-            trimmed
-        } else {
-            "http://$trimmed"
-        }
+        val parsed = trimmed.toHttpUrlOrNull() ?: "http://$trimmed".toHttpUrlOrNull() ?: return null
 
-        return withScheme.toHttpUrlOrNull()?.toString()?.removeSuffix("/")
+        return parsed.toString().removeSuffix("/")
     }
 
     fun disconnect() {

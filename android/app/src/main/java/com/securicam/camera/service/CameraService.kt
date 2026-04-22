@@ -191,7 +191,7 @@ class CameraService : LifecycleService() {
                 stopRecording()
             },
             onError = { error ->
-                Log.e(TAG, error)
+                Log.e(TAG, "Signaling error: $error")
             }
         )
         if (connected) {
