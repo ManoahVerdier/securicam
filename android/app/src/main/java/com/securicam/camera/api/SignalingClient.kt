@@ -80,6 +80,9 @@ class SignalingClient(
             return false
         }
 
+        Log.d(TAG, "Connecting to WebSocket URL: $wsUrl")
+        Log.d(TAG, "Using serverUrl='$serverUrl' normalizedServerUrl='$normalizedServerUrl'")
+
         val request = try {
             Request.Builder()
                 .url(wsUrl)
@@ -95,7 +98,8 @@ class SignalingClient(
 
         webSocket = httpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                Log.d(TAG, "WebSocket connected, waiting for connection_established")
+                Log.d(TAG, "WebSocket connected (onOpen), waiting for connection_established")
+                Log.d(TAG, "onOpen response code=${response.code} headers=${response.headers}")
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -108,7 +112,8 @@ class SignalingClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.e(TAG, "WebSocket error", t)
+                Log.e(TAG, "WebSocket onFailure: ${t.javaClass.simpleName}: ${t.message}", t)
+                Log.e(TAG, "WebSocket failure response: code=${response?.code} message=${response?.message} body=${response?.body?.string()}")
                 connectionReadyDeferred?.let {
                     if (!it.isCompleted) {
                         it.complete(false)
