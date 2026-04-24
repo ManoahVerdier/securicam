@@ -51,18 +51,18 @@ class CameraService : LifecycleService() {
     private val binder = LocalBinder()
     private var cameraExecutor: ExecutorService? = null
     private var cameraProvider: ProcessCameraProvider? = null
-    
+
     private var webRtcClient: WebRtcClient? = null
     private var signalingClient: SignalingClient? = null
-    
+
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    
+
     private var serverUrl: String = ""
     private var authToken: String = ""
     private var cameraId: Int = 0
     private var isStreamStarting: Boolean = false
     private val signalingConnectMutex = Mutex()
-    
+
     var isStreaming: Boolean = false
         private set
 
@@ -107,7 +107,7 @@ class CameraService : LifecycleService() {
 
     private fun startForegroundService() {
         val notification = createNotification()
-        
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ServiceCompat.startForeground(
                 this,
@@ -308,7 +308,7 @@ class CameraService : LifecycleService() {
 
                 // isStreaming will be set to true by the connection-state callback
                 // when ICE reaches CONNECTED; isStreamStarting was set by the caller.
-                
+
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start WebRTC streaming", e)
                 isStreaming = false
@@ -322,7 +322,7 @@ class CameraService : LifecycleService() {
             isStreaming = false
             isStreamStarting = false
             updateStatus(if (keepReady) "online" else "offline")
-            
+
             webRtcClient?.release()
             webRtcClient = null
 
@@ -332,7 +332,7 @@ class CameraService : LifecycleService() {
             cameraProvider = null
         }
     }
-    
+
     private suspend fun updateStatus(status: String) {
         signalingClient?.updateCameraStatus(status)
     }
