@@ -107,11 +107,8 @@ export class WebrtcService implements OnDestroy {
       await this.requestStreamStart(cameraId);
       const cameraStatus = await this.waitForCameraReady(cameraId, WebrtcService.CAMERA_READY_TIMEOUT_MS);
       console.info(`[WebRTC] Camera ${cameraId} is ready with status "${cameraStatus}"`);
-      // If camera just came online (start request may have failed when camera was offline), retry
-      if (cameraStatus === 'online') {
-        console.info(`[WebRTC] Camera ${cameraId} is online, sending start request`);
-        await this.requestStreamStart(cameraId);
-      }
+      // Don't fire a second start request: it triggers an unnecessary renegotiation that
+      // can drop a freshly-established ICE connection on the camera side.
     } catch (error) {
       this.disconnectFromCamera(cameraId);
       throw error;

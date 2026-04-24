@@ -1,0 +1,178 @@
+# ============================================================================
+# Securicam — production stack
+#   Domain: securicam.verdier-developpement.fr
+#   Components:
+#     - nginx       : TLS termination + Angular SPA + reverse proxy /api /app
+#     - backend     : PHP-FPM (Laravel API)
+#     - reverb      : Laravel Reverb WebSocket (signaling)
+#     - db          : MySQL 8 (persistent volume)
+#     - redis       : cache + broadcast driver
+#     - coturn      : STUN/TURN for WebRTC NAT traversal
+#     - certbot     : Let's Encrypt cert renewal (run on demand)
+#
+# Secrets to override via .env (see .env.prod.example):
+#   APP_KEY, DB_PASSWORD, REVERB_APP_SECRET, TURN_PASSWORD
+# ============================================================================
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: docker/nginx/Dockerfile.prod
+      args:
+        PUBLIC_HOST: ${PUBLIC_HOST}
+        TURN_HOST: ${TURN_HOST}
+        TURN_USER: ${TURN_USER}
+        TURN_PASSWORD: ${TURN_PASSWORD}
+    container_name: securicam-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Laravel public/ for fastcgi script execution
+      - ./backend:/var/www
+      # TLS certificates (managed by certbot, mounted read-only)
+      - certbot-etc:/etc/letsencrypt:ro
+      - certbot-www:/var/www/certbot
+    depends_on:
+      - backend
+      - reverb
+    networks:
+      - securicam-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: securicam-backend
+    restart: unless-stopped
+    working_dir: /var/www
+    command: >-
+      sh -c "php artisan migrate --force
+             && php artisan config:cache
+             && php artisan route:cache
+             && php artisan event:cache
+             && php-fpm"
+    volumes:
+      - ./backend:/var/www
+    env_file:
+      - .env.prod
+    environment:
+      - APP_ENV=production
+      - APP_DEBUG=false
+      - DB_CONNECTION=mysql
+      - DB_HOST=db
+      - DB_PORT=3306
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - BROADCAST_CONNECTION=reverb
+      - REVERB_HOST=reverb
+      - REVERB_PORT=8081
+      - REVERB_SCHEME=http
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - securicam-network
+
+  reverb:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: securicam-reverb
+    restart: unless-stopped
+    working_dir: /var/www
+    command: php artisan reverb:start --host=0.0.0.0 --port=8081
+    volumes:
+      - ./backend:/var/www
+    env_file:
+      - .env.prod
+    environment:
+      - APP_ENV=production
+      - DB_CONNECTION=mysql
+      - DB_HOST=db
+      - DB_PORT=3306
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_started
+    networks:
+      - securicam-network
+
+  db:
+    image: mysql:8.0
+    container_name: securicam-db
+    restart: unless-stopped
+    environment:
+      - MYSQL_DATABASE=${DB_DATABASE}
+      - MYSQL_USER=${DB_USERNAME}
+      - MYSQL_PASSWORD=${DB_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
+    volumes:
+      - dbdata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u${DB_USERNAME}", "-p${DB_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - securicam-network
+
+  redis:
+    image: redis:alpine
+    container_name: securicam-redis
+    restart: unless-stopped
+    networks:
+      - securicam-network
+
+  # ----------------------------------------------------------------------
+  # coturn = STUN + TURN. Required so WebRTC works between mobile (4G) and
+  # browser when both are behind NAT and cannot reach each other directly.
+  # Uses host networking so it can advertise the VPS public IP correctly.
+  # ----------------------------------------------------------------------
+  coturn:
+    image: coturn/coturn:latest
+    container_name: securicam-coturn
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./docker/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    command: >-
+      -c /etc/coturn/turnserver.conf
+      --external-ip=${PUBLIC_IP}
+      --user=${TURN_USER}:${TURN_PASSWORD}
+
+  # ----------------------------------------------------------------------
+  # certbot: run on demand to issue / renew Let's Encrypt certs.
+  # Initial issuance:
+  #   docker compose -f docker-compose.prod.yml run --rm certbot \
+  #     certonly --webroot -w /var/www/certbot -d securicam.verdier-developpement.fr \
+  #     --email you@example.com --agree-tos --no-eff-email
+  # Renewal cron (host crontab):
+  #   0 3 * * * cd /opt/securicam && docker compose -f docker-compose.prod.yml run --rm certbot renew && docker compose -f docker-compose.prod.yml exec nginx nginx -s reload
+  # ----------------------------------------------------------------------
+  certbot:
+    image: certbot/certbot:latest
+    container_name: securicam-certbot
+    volumes:
+      - certbot-etc:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    entrypoint: ["certbot"]
+
+networks:
+  securicam-network:
+    driver: bridge
+
+volumes:
+  dbdata:
+    driver: local
+  certbot-etc:
+    driver: local
+  certbot-www:
+    driver: local

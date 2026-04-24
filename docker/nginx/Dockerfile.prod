@@ -1,0 +1,43 @@
+# ============================================================================
+# Stage 1 — Build Angular SPA
+# ============================================================================
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /app
+
+COPY frontend/package*.json ./
+RUN npm ci --no-audit --no-fund
+
+COPY frontend/ ./
+
+ARG PUBLIC_HOST=securicam.verdier-developpement.fr
+ARG TURN_HOST=securicam.verdier-developpement.fr
+ARG TURN_USER=securicam
+ARG TURN_PASSWORD=changeme
+
+RUN sed -i \
+        -e "s|__PUBLIC_HOST__|${PUBLIC_HOST}|g" \
+        -e "s|__TURN_HOST__|${TURN_HOST}|g" \
+        -e "s|__TURN_USER__|${TURN_USER}|g" \
+        -e "s|__TURN_PASSWORD__|${TURN_PASSWORD}|g" \
+        src/environments/environment.prod.ts \
+ && npx ng build --configuration production
+
+# ============================================================================
+# Stage 2 — Final nginx image with TLS + SPA + reverse proxy
+# ============================================================================
+FROM nginx:alpine
+
+# Copy built SPA into webroot
+COPY --from=frontend-builder /app/dist/securicam-viewer/browser /usr/share/nginx/html
+
+# Copy Laravel public assets folder structure (only index.php served via fastcgi).
+# Mount the actual /var/www at runtime via volume in docker-compose.
+
+# Runtime config
+COPY docker/nginx/prod.conf /etc/nginx/conf.d/default.conf
+
+# Default certificates location (overridden by volume mount in compose)
+RUN mkdir -p /etc/letsencrypt/live
+
+EXPOSE 80 443

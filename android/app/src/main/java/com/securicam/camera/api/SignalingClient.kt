@@ -235,6 +235,17 @@ class SignalingClient(
             }
 
             when (event) {
+                "pusher:ping" -> {
+                    Log.d(TAG, "Received pusher:ping, replying with pusher:pong")
+                    val pong = JsonObject().apply {
+                        addProperty("event", "pusher:pong")
+                        add("data", JsonObject())
+                    }
+                    webSocket?.send(gson.toJson(pong))
+                }
+                "pusher:pong" -> {
+                    Log.d(TAG, "Received pusher:pong")
+                }
                 "pusher:connection_established" -> {
                     val sid = data?.get("socket_id")?.asString
                     Log.d(TAG, "Connection established, socket_id=$sid")
@@ -339,6 +350,30 @@ class SignalingClient(
             return@withContext false
         }
         return@withContext makeRequest(url, body, "PATCH")
+    }
+
+    suspend fun notifyConnect(): Boolean = withContext(Dispatchers.IO) {
+        val url = buildApiUrl("/cameras/$cameraId/connect") ?: run {
+            Log.e(TAG, "Failed to notify connect: invalid server URL '$serverUrl'")
+            return@withContext false
+        }
+        return@withContext makeRequest(url, JsonObject())
+    }
+
+    suspend fun notifyHeartbeat(): Boolean = withContext(Dispatchers.IO) {
+        val url = buildApiUrl("/cameras/$cameraId/heartbeat") ?: run {
+            Log.e(TAG, "Failed to send heartbeat: invalid server URL '$serverUrl'")
+            return@withContext false
+        }
+        return@withContext makeRequest(url, JsonObject())
+    }
+
+    suspend fun notifyDisconnect(): Boolean = withContext(Dispatchers.IO) {
+        val url = buildApiUrl("/cameras/$cameraId/disconnect") ?: run {
+            Log.e(TAG, "Failed to notify disconnect: invalid server URL '$serverUrl'")
+            return@withContext false
+        }
+        return@withContext makeRequest(url, JsonObject())
     }
 
     private fun makeRequest(url: String, body: JsonObject, method: String = "POST"): Boolean {

@@ -46,6 +46,12 @@ class CameraService : LifecycleService() {
         const val EXTRA_SERVER_URL = "extra_server_url"
         const val EXTRA_AUTH_TOKEN = "extra_auth_token"
         const val EXTRA_CAMERA_ID = "extra_camera_id"
+        const val EXTRA_TURN_HOST = "extra_turn_host"
+        const val EXTRA_TURN_USER = "extra_turn_user"
+        const val EXTRA_TURN_PASSWORD = "extra_turn_password"
+
+        private const val RENEGOTIATION_DEBOUNCE_MS = 1500L
+        private const val HEARTBEAT_INTERVAL_MS = 30_000L
     }
 
     private val binder = LocalBinder()
@@ -56,15 +62,29 @@ class CameraService : LifecycleService() {
     private var signalingClient: SignalingClient? = null
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private var heartbeatJob: Job? = null
 
     private var serverUrl: String = ""
     private var authToken: String = ""
     private var cameraId: Int = 0
+    private var turnHost: String = ""
+    private var turnUser: String = ""
+    private var turnPassword: String = ""
     private var isStreamStarting: Boolean = false
     private val signalingConnectMutex = Mutex()
+    private var lastRenegotiationAt: Long = 0L
 
     var isStreaming: Boolean = false
         private set
+
+    val isSignalingConnected: Boolean
+        get() = signalingClient != null
+
+    val configuredServerUrl: String
+        get() = serverUrl
+
+    val configuredCameraId: Int
+        get() = cameraId
 
     inner class LocalBinder : Binder() {
         fun getService(): CameraService = this@CameraService
@@ -84,25 +104,46 @@ class CameraService : LifecycleService() {
                 startForegroundService()
                 connectSignalingIfNeeded()
                 serviceScope.launch {
-                    updateStatus("online")
+                    signalingClient?.notifyConnect()
                 }
+                startHeartbeat()
             }
             ACTION_START -> {
                 loadConfiguration(intent)
                 startForegroundService()
                 connectSignalingIfNeeded()
                 serviceScope.launch {
-                    updateStatus("online")
+                    signalingClient?.notifyConnect()
                 }
+                startHeartbeat()
             }
             ACTION_STOP -> {
+                stopHeartbeat()
                 stopStreaming(keepReady = false)
-                disconnectSignaling()
-                stopSelf()
+                serviceScope.launch {
+                    signalingClient?.notifyDisconnect()
+                    disconnectSignaling()
+                    stopSelf()
+                }
             }
         }
 
         return START_STICKY
+    }
+
+    private fun startHeartbeat() {
+        heartbeatJob?.cancel()
+        heartbeatJob = serviceScope.launch {
+            while (isActive) {
+                delay(HEARTBEAT_INTERVAL_MS)
+                signalingClient?.notifyHeartbeat()
+            }
+        }
+    }
+
+    private fun stopHeartbeat() {
+        heartbeatJob?.cancel()
+        heartbeatJob = null
     }
 
     private fun startForegroundService() {
@@ -157,6 +198,9 @@ class CameraService : LifecycleService() {
         serverUrl = intent.getStringExtra(EXTRA_SERVER_URL) ?: ""
         authToken = intent.getStringExtra(EXTRA_AUTH_TOKEN) ?: ""
         cameraId = intent.getIntExtra(EXTRA_CAMERA_ID, 0)
+        turnHost = intent.getStringExtra(EXTRA_TURN_HOST) ?: ""
+        turnUser = intent.getStringExtra(EXTRA_TURN_USER) ?: ""
+        turnPassword = intent.getStringExtra(EXTRA_TURN_PASSWORD) ?: ""
     }
 
     private fun connectSignalingIfNeeded() {
@@ -228,6 +272,26 @@ class CameraService : LifecycleService() {
 
     private fun startStreamingIfNeeded() {
         if (isStreaming || isStreamStarting) {
+            // Already streaming: a (new) viewer just asked for the stream.
+            // Re-issue an offer so the freshly-subscribed peer receives it.
+            if (webRtcClient != null) {
+                // Debounce: the web viewer can fire several start requests in a row
+                // (initial connect + status retry). Skip extra renegotiations within
+                // a short window — they cause libwebrtc to recreate the encoder and
+                // briefly tear down the active camera capture session.
+                val now = System.currentTimeMillis()
+                if (now - lastRenegotiationAt < RENEGOTIATION_DEBOUNCE_MS) {
+                    Log.d(TAG, "startStreamingIfNeeded: skipping duplicate renegotiation (debounced)")
+                    return
+                }
+                lastRenegotiationAt = now
+                Log.d(TAG, "startStreamingIfNeeded: already streaming, renegotiating offer for new viewer")
+                webRtcClient?.createOffer { sdp ->
+                    serviceScope.launch {
+                        signalingClient?.sendOffer(sdp)
+                    }
+                }
+            }
             return
         }
         isStreamStarting = true
@@ -279,7 +343,8 @@ class CameraService : LifecycleService() {
                 updateStatus("online")
 
                 // Initialize WebRTC
-                webRtcClient = WebRtcClient(applicationContext, cameraProvider!!, this@CameraService)
+                val iceServers = WebRtcClient.buildIceServers(turnHost, turnUser, turnPassword)
+                webRtcClient = WebRtcClient(applicationContext, cameraProvider!!, this@CameraService, iceServers)
 
                 // Set callbacks before creating the offer so no early candidates are lost
                 webRtcClient?.setConnectionStateCallback { connected ->
@@ -363,7 +428,14 @@ class CameraService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        stopHeartbeat()
         stopStreaming(keepReady = false)
+        runBlocking {
+            try {
+                signalingClient?.notifyDisconnect()
+            } catch (_: Exception) {
+            }
+        }
         disconnectSignaling()
         serviceScope.cancel()
         super.onDestroy()

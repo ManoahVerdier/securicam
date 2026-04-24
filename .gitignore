@@ -1,0 +1,37 @@
+# Production secrets — NEVER commit
+.env
+.env.prod
+.env.local
+.env.*.local
+
+# Docker / runtime
+.android-cache/
+.gradle-cache/
+*.log
+
+# Backend Laravel (in addition to backend/.gitignore)
+backend/storage/logs/*.log
+backend/storage/framework/cache/data/*
+backend/storage/framework/sessions/*
+backend/storage/framework/views/*
+
+# Android build artefacts
+android/.gradle/
+android/.idea/
+android/local.properties
+android/app/build/
+android/build/
+android/app/release/
+*.apk
+*.aab
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp

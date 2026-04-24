@@ -122,25 +122,56 @@ Ce dépôt sert actuellement de **spécification d’architecture et de cadrage 
 
 ## 8) Démarrage rapide
 
-### Lancer l'environnement de développement
+Securicam supporte **deux modes de fonctionnement** :
+
+| Mode | Quand l'utiliser | Stack | URL frontend |
+|------|------------------|-------|--------------|
+| **LAN / dev** | Caméras et viewer sur le même réseau wifi domestique | `docker-compose.yml` | `http://localhost:4200` |
+| **Production VPS** | Caméras 4G + viewers Internet | `docker-compose.prod.yml` | `https://<votre-domaine>` |
+
+Les deux modes restent fonctionnels en parallèle ; la config Android (debug vs
+release) et celle du frontend (`environment.ts` vs `environment.prod.ts`)
+basculent automatiquement.
+
+### Mode LAN / développement
 
 ```bash
-# Cloner le dépôt
 git clone https://github.com/ManoahVerdier/securicam.git
 cd securicam
+docker compose up -d
+docker compose exec backend php artisan migrate
 
-# Lancer avec Docker
-docker-compose up -d
-
-# Initialiser la base de données
-docker-compose exec backend php artisan migrate
+cd frontend && npm install && npm start          # http://localhost:4200
+cd android && ./gradlew assembleDebug            # APK debug = HTTP autorisé sur LAN
 ```
 
-### Accès aux services
+Services :
+- Frontend Angular : http://localhost:4200
+- API Laravel : http://localhost:8000
+- WebSocket Reverb : ws://localhost:8081
 
-- **Frontend Angular** : http://localhost:4200
-- **API Laravel** : http://localhost:8000
-- **WebSocket Reverb** : ws://localhost:8081
+### Mode production (VPS public)
+
+Voir [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) pour la procédure complète.
+Résumé :
+
+```bash
+# Sur le VPS, après installation Docker + UFW
+git clone https://github.com/ManoahVerdier/securicam.git /opt/securicam
+cd /opt/securicam
+cp .env.prod.example .env.prod         # éditer les secrets
+
+# Émission du certificat puis stack complète
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build nginx
+docker compose -f docker-compose.prod.yml run --rm certbot certonly \
+    --webroot -w /var/www/certbot -d <domaine> \
+    --email <email> --agree-tos --no-eff-email
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+```
+
+L'APK release (`./gradlew assembleRelease`) bascule automatiquement en HTTPS-only
+via `network_security_config.xml`. L'APK debug conserve l'autorisation cleartext
+LAN via l'overlay `src/debug/res/xml/network_security_config.xml`.
 
 ### Compiler l'application Android
 

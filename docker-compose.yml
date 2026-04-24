@@ -69,7 +69,7 @@ services:
     container_name: securicam-reverb
     restart: unless-stopped
     working_dir: /var/www
-    command: php artisan reverb:start --host=0.0.0.0 --port=8081
+    command: php artisan reverb:start --host=0.0.0.0 --port=8081 --debug
     ports:
       - "8081:8081"
     volumes:

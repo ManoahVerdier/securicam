@@ -22,6 +22,7 @@ import androidx.core.content.ContextCompat
 import com.securicam.camera.R
 import com.securicam.camera.databinding.ActivityMainBinding
 import com.securicam.camera.service.CameraService
+import java.net.NetworkInterface
 
 class MainActivity : AppCompatActivity() {
 
@@ -31,23 +32,21 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_AUTH_TOKEN = "auth_token"
         private const val KEY_CAMERA_ID = "camera_id"
         private const val KEY_AUTO_START = "auto_start_enabled"
-        private const val UI_REFRESH_INTERVAL_MS = 500L
-        private const val STREAM_START_TIMEOUT_MS = 15000L
+        private const val KEY_TURN_HOST = "turn_host"
+        private const val KEY_TURN_USER = "turn_user"
+        private const val KEY_TURN_PASSWORD = "turn_password"
+        private const val UI_REFRESH_INTERVAL_MS = 1000L
     }
 
     private lateinit var binding: ActivityMainBinding
 
     private var cameraService: CameraService? = null
     private var isServiceBound = false
-    private var isStartRequested = false
-    private var startRequestedAtMillis: Long = 0L
     private val uiHandler = Handler(Looper.getMainLooper())
     private val uiRefreshRunnable = object : Runnable {
         override fun run() {
-            if (isServiceBound) {
-                updateUI()
-                uiHandler.postDelayed(this, UI_REFRESH_INTERVAL_MS)
-            }
+            updateUI()
+            uiHandler.postDelayed(this, UI_REFRESH_INTERVAL_MS)
         }
     }
 
@@ -71,7 +70,7 @@ class MainActivity : AppCompatActivity() {
     ) { permissions ->
         val allGranted = permissions.all { it.value }
         if (allGranted) {
-            startStreaming()
+            connectToBackend()
         } else {
             Toast.makeText(this, "Permissions required for camera streaming", Toast.LENGTH_LONG).show()
         }
@@ -85,6 +84,8 @@ class MainActivity : AppCompatActivity() {
         loadSavedConfig()
         setupListeners()
         checkBatteryOptimization()
+
+        ensurePermissionsAndConnect()
     }
 
     override fun onStart() {
@@ -111,7 +112,10 @@ class MainActivity : AppCompatActivity() {
         binding.etServerUrl.setText(prefs.getString(KEY_SERVER_URL, ""))
         binding.etAuthToken.setText(prefs.getString(KEY_AUTH_TOKEN, ""))
         binding.etCameraId.setText(prefs.getInt(KEY_CAMERA_ID, 0).toString())
-        binding.switchAutoStart.isChecked = prefs.getBoolean(KEY_AUTO_START, false)
+        binding.etTurnHost.setText(prefs.getString(KEY_TURN_HOST, ""))
+        binding.etTurnUser.setText(prefs.getString(KEY_TURN_USER, ""))
+        binding.etTurnPassword.setText(prefs.getString(KEY_TURN_PASSWORD, ""))
+        binding.switchAutoStart.isChecked = prefs.getBoolean(KEY_AUTO_START, true)
     }
 
     private fun saveConfig() {
@@ -120,6 +124,9 @@ class MainActivity : AppCompatActivity() {
             putString(KEY_SERVER_URL, binding.etServerUrl.text.toString())
             putString(KEY_AUTH_TOKEN, binding.etAuthToken.text.toString())
             putInt(KEY_CAMERA_ID, binding.etCameraId.text.toString().toIntOrNull() ?: 0)
+            putString(KEY_TURN_HOST, binding.etTurnHost.text.toString())
+            putString(KEY_TURN_USER, binding.etTurnUser.text.toString())
+            putString(KEY_TURN_PASSWORD, binding.etTurnPassword.text.toString())
             putBoolean(KEY_AUTO_START, binding.switchAutoStart.isChecked)
             apply()
         }
@@ -127,20 +134,23 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupListeners() {
         binding.btnStartStop.setOnClickListener {
-            if (cameraService?.isStreaming == true || isStartRequested) {
-                stopStreaming()
+            val service = cameraService
+            if (service != null && service.isSignalingConnected) {
+                disconnectFromBackend()
             } else {
-                checkPermissionsAndStart()
+                ensurePermissionsAndConnect()
             }
         }
 
-        binding.switchAutoStart.setOnCheckedChangeListener { _, isChecked ->
+        binding.switchAutoStart.setOnCheckedChangeListener { _, _ ->
             saveConfig()
         }
 
         binding.btnSaveConfig.setOnClickListener {
             saveConfig()
-            Toast.makeText(this, "Configuration saved", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Configuration enregistree", Toast.LENGTH_SHORT).show()
+            disconnectFromBackend()
+            uiHandler.postDelayed({ ensurePermissionsAndConnect() }, 500)
         }
 
         binding.btnBatterySettings.setOnClickListener {
@@ -148,7 +158,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun checkPermissionsAndStart() {
+    private fun ensurePermissionsAndConnect() {
+        val serverUrl = binding.etServerUrl.text.toString()
+        val authToken = binding.etAuthToken.text.toString()
+        val cameraId = binding.etCameraId.text.toString().toIntOrNull() ?: 0
+
+        if (serverUrl.isEmpty() || authToken.isEmpty() || cameraId == 0) {
+            return
+        }
+
         val permissions = mutableListOf(
             Manifest.permission.CAMERA,
             Manifest.permission.RECORD_AUDIO
@@ -163,29 +181,32 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (missingPermissions.isEmpty()) {
-            startStreaming()
+            connectToBackend()
         } else {
             permissionLauncher.launch(missingPermissions.toTypedArray())
         }
     }
 
-    private fun startStreaming() {
+    private fun connectToBackend() {
         val serverUrl = binding.etServerUrl.text.toString()
         val authToken = binding.etAuthToken.text.toString()
         val cameraId = binding.etCameraId.text.toString().toIntOrNull() ?: 0
 
         if (serverUrl.isEmpty() || authToken.isEmpty() || cameraId == 0) {
-            Toast.makeText(this, "Please fill all configuration fields", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Veuillez remplir la configuration", Toast.LENGTH_LONG).show()
             return
         }
 
         saveConfig()
 
         val intent = Intent(this, CameraService::class.java).apply {
-            action = CameraService.ACTION_START
+            action = CameraService.ACTION_PREPARE
             putExtra(CameraService.EXTRA_SERVER_URL, serverUrl)
             putExtra(CameraService.EXTRA_AUTH_TOKEN, authToken)
             putExtra(CameraService.EXTRA_CAMERA_ID, cameraId)
+            putExtra(CameraService.EXTRA_TURN_HOST, binding.etTurnHost.text.toString())
+            putExtra(CameraService.EXTRA_TURN_USER, binding.etTurnUser.text.toString())
+            putExtra(CameraService.EXTRA_TURN_PASSWORD, binding.etTurnPassword.text.toString())
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -193,56 +214,49 @@ class MainActivity : AppCompatActivity() {
         } else {
             startService(intent)
         }
-
-        isStartRequested = true
-        startRequestedAtMillis = System.currentTimeMillis()
         updateUI()
-        Toast.makeText(this, "Starting camera stream...", Toast.LENGTH_SHORT).show()
     }
 
-    private fun stopStreaming() {
+    private fun disconnectFromBackend() {
         val intent = Intent(this, CameraService::class.java).apply {
             action = CameraService.ACTION_STOP
         }
         startService(intent)
-        isStartRequested = false
-        startRequestedAtMillis = 0L
         updateUI()
-        Toast.makeText(this, "Stopping camera stream...", Toast.LENGTH_SHORT).show()
     }
 
     private fun updateUI() {
-        val isStreaming = cameraService?.isStreaming == true
-        if (isStartRequested && !isStreaming && System.currentTimeMillis() - startRequestedAtMillis > STREAM_START_TIMEOUT_MS) {
-            isStartRequested = false
-            startRequestedAtMillis = 0L
-        } else if (isStreaming) {
-            startRequestedAtMillis = 0L
-        }
-        val shouldShowStop = isStreaming || isStartRequested
+        val service = cameraService
+        val connected = service?.isSignalingConnected == true
+        val streaming = service?.isStreaming == true
 
-        binding.btnStartStop.text = if (shouldShowStop) {
-            getString(R.string.stop_streaming)
+        binding.btnStartStop.text = if (connected) {
+            getString(R.string.disconnect_from_server)
         } else {
-            getString(R.string.start_streaming)
+            getString(R.string.connect_to_server)
         }
 
         binding.statusIndicator.setBackgroundResource(
-            if (isStreaming) R.drawable.status_online else R.drawable.status_offline
+            if (connected) R.drawable.status_online else R.drawable.status_offline
         )
 
-        binding.tvStatus.text = if (isStreaming) {
-            getString(R.string.status_streaming)
-        } else if (isStartRequested) {
-            getString(R.string.status_connecting)
-        } else {
-            getString(R.string.status_stopped)
+        binding.tvStatus.text = when {
+            streaming -> getString(R.string.status_streaming)
+            connected -> getString(R.string.status_connected)
+            else -> getString(R.string.status_disconnected)
         }
 
-        // Disable config editing while streaming
-        binding.etServerUrl.isEnabled = !shouldShowStop
-        binding.etAuthToken.isEnabled = !shouldShowStop
-        binding.etCameraId.isEnabled = !shouldShowStop
+        val ip = getLocalIpAddress() ?: "-"
+        binding.tvLocalIp.text = getString(R.string.local_ip_format, ip)
+        val server = service?.configuredServerUrl?.ifEmpty { "-" } ?: "-"
+        binding.tvServerInfo.text = getString(R.string.server_info_format, server)
+
+        binding.etServerUrl.isEnabled = !connected
+        binding.etAuthToken.isEnabled = !connected
+        binding.etCameraId.isEnabled = !connected
+        binding.etTurnHost.isEnabled = !connected
+        binding.etTurnUser.isEnabled = !connected
+        binding.etTurnPassword.isEnabled = !connected
     }
 
     private fun startUiRefresh() {
@@ -252,6 +266,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopUiRefresh() {
         uiHandler.removeCallbacks(uiRefreshRunnable)
+    }
+
+    private fun getLocalIpAddress(): String? {
+        return try {
+            NetworkInterface.getNetworkInterfaces()
+                .toList()
+                .flatMap { it.inetAddresses.toList() }
+                .firstOrNull { !it.isLoopbackAddress && it.hostAddress?.contains('.') == true }
+                ?.hostAddress
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private fun checkBatteryOptimization() {

@@ -52,6 +52,9 @@ class WebRtcController extends Controller
         $camera = Camera::findOrFail($validated['camera_id']);
         $this->authorize('update', $camera);
 
+        // DEBUG: dump SDP to storage so we can diagnose Chrome parser errors.
+        @file_put_contents(storage_path('logs/last_offer.sdp'), $validated['sdp']);
+
         // Broadcast the offer to the camera's channel for viewers
         broadcast(new WebRtcOffer(
             cameraId: $camera->id,

@@ -5,6 +5,8 @@ export interface Camera {
   device_id: string;
   status: CameraStatus;
   last_seen_at?: string;
+  last_ip?: string;
+  connected_at?: string;
   created_at: string;
   updated_at: string;
 }

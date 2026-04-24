@@ -32,6 +32,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('cameras', CameraController::class);
     Route::post('/cameras/init-status', [CameraController::class, 'initStatus']);
     Route::patch('/cameras/{camera}/status', [CameraController::class, 'updateStatus']);
+    Route::post('/cameras/{camera}/connect', [CameraController::class, 'connect']);
+    Route::post('/cameras/{camera}/heartbeat', [CameraController::class, 'heartbeat']);
+    Route::post('/cameras/{camera}/disconnect', [CameraController::class, 'disconnect']);
 
     // WebRTC signaling
     Route::prefix('webrtc')->group(function () {

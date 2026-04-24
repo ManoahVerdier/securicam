@@ -122,11 +122,69 @@ class CameraController extends Controller
         $camera->update([
             'status' => $validated['status'],
             'last_seen_at' => now(),
+            'last_ip' => $request->ip(),
         ]);
 
         return response()->json([
             'message' => 'Camera status updated',
-            'camera' => $camera,
+            'camera' => $camera->fresh(),
+        ]);
+    }
+
+    /**
+     * Mark camera as connected (Android app just opened/registered).
+     * Sets status=online, records connected_at and IP.
+     */
+    public function connect(Request $request, Camera $camera): JsonResponse
+    {
+        $this->authorize('update', $camera);
+
+        $camera->update([
+            'status' => Camera::STATUS_ONLINE,
+            'last_seen_at' => now(),
+            'connected_at' => now(),
+            'last_ip' => $request->ip(),
+        ]);
+
+        return response()->json([
+            'message' => 'Camera connected',
+            'camera' => $camera->fresh(),
+        ]);
+    }
+
+    /**
+     * Heartbeat from Android: refresh last_seen_at + IP without changing connected_at.
+     */
+    public function heartbeat(Request $request, Camera $camera): JsonResponse
+    {
+        $this->authorize('update', $camera);
+
+        $camera->update([
+            'last_seen_at' => now(),
+            'last_ip' => $request->ip(),
+        ]);
+
+        return response()->json([
+            'camera' => $camera->fresh(),
+        ]);
+    }
+
+    /**
+     * Mark camera as disconnected (Android app stopping cleanly).
+     */
+    public function disconnect(Request $request, Camera $camera): JsonResponse
+    {
+        $this->authorize('update', $camera);
+
+        $camera->update([
+            'status' => Camera::STATUS_OFFLINE,
+            'connected_at' => null,
+            'last_seen_at' => now(),
+        ]);
+
+        return response()->json([
+            'message' => 'Camera disconnected',
+            'camera' => $camera->fresh(),
         ]);
     }
 

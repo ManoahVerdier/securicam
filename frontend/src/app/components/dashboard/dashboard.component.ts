@@ -22,8 +22,10 @@ import { GalleryComponent } from '../gallery/gallery.component';
 export class DashboardComponent implements OnInit, OnDestroy {
   cameras: Camera[] = [];
   selectedCamera: Camera | null = null;
+  viewMode: 'info' | 'stream' = 'info';
   isLoading = true;
   error = '';
+  private pollingHandle: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private authService: AuthService,
@@ -35,27 +37,38 @@ export class DashboardComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.loadCameras();
     this.signalingService.connect();
+    this.pollingHandle = setInterval(() => this.loadCameras(), 5000);
   }
 
   ngOnDestroy(): void {
+    if (this.pollingHandle) {
+      clearInterval(this.pollingHandle);
+      this.pollingHandle = null;
+    }
     this.signalingService.disconnect();
   }
 
   loadCameras(): void {
-    this.isLoading = true;
+    const initial = this.cameras.length === 0;
+    if (initial) {
+      this.isLoading = true;
+    }
     this.cameraService.getCameras().subscribe({
       next: (response) => {
         this.cameras = response.cameras;
         this.isLoading = false;
 
-        // Auto-select first camera if available
-        if (this.cameras.length > 0 && !this.selectedCamera) {
-          const firstAvailableCamera = this.cameras.find(camera => camera.status !== 'offline');
-          this.selectCamera(firstAvailableCamera ?? this.cameras[0]);
+        if (this.selectedCamera) {
+          const refreshed = this.cameras.find(c => c.id === this.selectedCamera!.id);
+          if (refreshed) {
+            this.selectedCamera = refreshed;
+          }
         }
       },
       error: () => {
-        this.error = 'Erreur lors du chargement des caméras';
+        if (initial) {
+          this.error = 'Erreur lors du chargement des caméras';
+        }
         this.isLoading = false;
       }
     });
@@ -63,6 +76,22 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   selectCamera(camera: Camera): void {
     this.selectedCamera = camera;
+    this.viewMode = 'info';
+  }
+
+  startStreaming(): void {
+    if (!this.selectedCamera) {
+      return;
+    }
+    this.viewMode = 'stream';
+  }
+
+  stopStreaming(): void {
+    this.viewMode = 'info';
+  }
+
+  isReady(camera: Camera): boolean {
+    return camera.status !== 'offline';
   }
 
   onCameraStatusChanged(camera: Camera): void {

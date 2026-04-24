@@ -58,8 +58,8 @@ dependencies {
     implementation("androidx.camera:camera-video:$cameraxVersion")
     implementation("androidx.camera:camera-view:$cameraxVersion")
     
-    // WebRTC
-    implementation("org.webrtc:google-webrtc:1.0.32006")
+    // WebRTC (maintained fork — drop-in replacement, same `org.webrtc.*` package)
+    implementation("io.getstream:stream-webrtc-android:1.1.1")
     
     // Networking
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

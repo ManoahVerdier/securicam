@@ -49,15 +49,61 @@
       </div>
 
       <div class="camera-view" *ngIf="selectedCamera">
-        <app-camera-viewer [camera]="selectedCamera"></app-camera-viewer>
+        <ng-container *ngIf="viewMode === 'info'">
+          <div class="camera-info-panel">
+            <h2>{{ selectedCamera.name }}</h2>
+            <ul class="info-list">
+              <li>
+                <span class="label">Statut</span>
+                <span class="value">
+                  <span class="status-dot" [class.online]="isReady(selectedCamera)"></span>
+                  {{ isReady(selectedCamera) ? 'Prêt' : 'Hors-ligne' }}
+                  ({{ selectedCamera.status }})
+                </span>
+              </li>
+              <li>
+                <span class="label">Téléphone connecté</span>
+                <span class="value">{{ isReady(selectedCamera) ? 'Oui' : 'Non' }}</span>
+              </li>
+              <li>
+                <span class="label">IP</span>
+                <span class="value">{{ selectedCamera.last_ip || '—' }}</span>
+              </li>
+              <li>
+                <span class="label">Connecté depuis</span>
+                <span class="value">{{ selectedCamera.connected_at || '—' }}</span>
+              </li>
+              <li>
+                <span class="label">Dernier signal</span>
+                <span class="value">{{ selectedCamera.last_seen_at || '—' }}</span>
+              </li>
+              <li>
+                <span class="label">Device ID</span>
+                <span class="value">{{ selectedCamera.device_id }}</span>
+              </li>
+            </ul>
+            <button
+              class="start-stream-btn"
+              [disabled]="!isReady(selectedCamera)"
+              (click)="startStreaming()"
+            >
+              ▶ Démarrer le streaming
+            </button>
+          </div>
+        </ng-container>
 
-        <app-capture-controls
-          [camera]="selectedCamera"
-          (statusChanged)="onCameraStatusChanged($event)"
-          (error)="onError($event)"
-        ></app-capture-controls>
+        <ng-container *ngIf="viewMode === 'stream'">
+          <button class="stop-stream-btn" (click)="stopStreaming()">⬅ Retour aux infos</button>
+          <app-camera-viewer [camera]="selectedCamera"></app-camera-viewer>
 
-        <app-gallery [camera]="selectedCamera"></app-gallery>
+          <app-capture-controls
+            [camera]="selectedCamera"
+            (statusChanged)="onCameraStatusChanged($event)"
+            (error)="onError($event)"
+          ></app-capture-controls>
+
+          <app-gallery [camera]="selectedCamera"></app-gallery>
+        </ng-container>
       </div>
     </main>
   </div>

@@ -17,6 +17,12 @@ return Application::configure(basePath: dirname(__DIR__))
             \App\Http\Middleware\LogRequests::class,
         ]);
 
+        // Preserve raw SDP payloads (CRLF terminators are required by RFC 4566).
+        $middleware->trimStrings([
+            'sdp',
+            'candidate.candidate',
+        ]);
+
         $middleware->alias([
             'verified' => \App\Http\Middleware\EnsureEmailIsVerified::class,
         ]);

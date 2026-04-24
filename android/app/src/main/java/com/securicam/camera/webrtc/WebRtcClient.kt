@@ -11,16 +11,44 @@ import java.util.concurrent.Executors
 class WebRtcClient(
     private val context: Context,
     private val cameraProvider: ProcessCameraProvider,
-    private val lifecycleOwner: LifecycleOwner
+    private val lifecycleOwner: LifecycleOwner,
+    private val iceServers: List<PeerConnection.IceServer> = DEFAULT_ICE_SERVERS
 ) {
 
     companion object {
         private const val TAG = "WebRtcClient"
-        
-        private val ICE_SERVERS = listOf(
+
+        val DEFAULT_ICE_SERVERS: List<PeerConnection.IceServer> = listOf(
             PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
             PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer()
         )
+
+        /**
+         * Build a TURN+STUN server list from raw config.
+         * If [turnHost] is null/blank, returns only the public Google STUN servers.
+         */
+        fun buildIceServers(
+            turnHost: String?,
+            turnUser: String?,
+            turnPassword: String?
+        ): List<PeerConnection.IceServer> {
+            if (turnHost.isNullOrBlank()) {
+                return DEFAULT_ICE_SERVERS
+            }
+            val stun = PeerConnection.IceServer.builder("stun:$turnHost:3478").createIceServer()
+            val turnBuilder = PeerConnection.IceServer
+                .builder(listOf(
+                    "turn:$turnHost:3478?transport=udp",
+                    "turn:$turnHost:3478?transport=tcp"
+                ))
+            if (!turnUser.isNullOrBlank()) {
+                turnBuilder.setUsername(turnUser)
+            }
+            if (!turnPassword.isNullOrBlank()) {
+                turnBuilder.setPassword(turnPassword)
+            }
+            return listOf(stun, turnBuilder.createIceServer())
+        }
     }
 
     private var peerConnectionFactory: PeerConnectionFactory? = null
@@ -113,16 +141,9 @@ class WebRtcClient(
         localVideoTrack = factory.createVideoTrack("video_track", videoSource)
         localVideoTrack?.setEnabled(true)
         
-        // Create audio source and track
-        val audioConstraints = MediaConstraints().apply {
-            mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
-            mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
-            mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
-        }
-        
-        localAudioSource = factory.createAudioSource(audioConstraints)
-        localAudioTrack = factory.createAudioTrack("audio_track", localAudioSource)
-        localAudioTrack?.setEnabled(true)
+        // Audio is intentionally disabled: stream-webrtc-android currently emits an SDP
+        // audio section that Chrome rejects ("a=ssrc ... msid:stream audio_track Invalid SDP line").
+        // Video-only streaming is sufficient for the surveillance use case.
     }
 
     private fun createCameraCapturer(): CameraVideoCapturer? {
@@ -149,7 +170,7 @@ class WebRtcClient(
         val factory = peerConnectionFactory
             ?: throw IllegalStateException("PeerConnectionFactory is not initialized")
 
-        val rtcConfig = PeerConnection.RTCConfiguration(ICE_SERVERS).apply {
+        val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
             bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
             rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
             tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.DISABLED
@@ -242,7 +263,7 @@ class WebRtcClient(
                         override fun onCreateSuccess(sdp: SessionDescription?) {}
                         override fun onSetSuccess() {
                             Log.d(TAG, "Local description set successfully")
-                            onOfferCreated(sessionDescription.description)
+                            onOfferCreated(ensureSdpTerminator(sessionDescription.description))
                         }
                         override fun onCreateFailure(error: String?) {
                             Log.e(TAG, "Failed to create local description: $error")
@@ -262,6 +283,18 @@ class WebRtcClient(
 
             override fun onSetFailure(error: String?) {}
         }, constraints)
+    }
+
+    private fun ensureSdpTerminator(sdp: String): String {
+        // 1. Strip legacy `a=ssrc:<id> msid:<stream> <track>` lines that Chrome (Unified Plan)
+        //    rejects with "Invalid SDP line". msid is already declared at the m= section level
+        //    via `a=msid:<stream> <track>`, so removing the per-ssrc copies is safe.
+        // 2. Some libwebrtc builds emit a SDP whose last line is not terminated by CRLF, which
+        //    also makes Chrome's parser fail; ensure a trailing CRLF is present.
+        val cleaned = sdp.lineSequence()
+            .filterNot { it.startsWith("a=ssrc:") && it.contains(" msid:") }
+            .joinToString("\r\n")
+        return if (cleaned.endsWith("\r\n")) cleaned else cleaned + "\r\n"
     }
 
     fun handleAnswer(sdp: String) {

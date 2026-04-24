@@ -1,266 +1,205 @@
-# Guide de déploiement Securicam
+# Déploiement Securicam (production)
 
-## Prérequis
+Ce guide décrit le déploiement de Securicam sur un VPS public avec un nom de
+domaine et HTTPS de bout en bout. C'est la topologie cible pour permettre à des
+téléphones Android (caméras) et à des navigateurs (viewers) sur n'importe quel
+réseau de se connecter sans configuration particulière côté client.
 
-- Docker et Docker Compose
-- Domaine avec certificat SSL (pour HTTPS/WSS)
-- Ou : Cloudflare Tunnel pour exposer facilement
+## 1. Topologie réseau
 
-## Déploiement local (développement)
-
-### 1. Cloner le dépôt
-
-```bash
-git clone https://github.com/ManoahVerdier/securicam.git
-cd securicam
+```
+[ Téléphone Android caméra ]              [ Navigateur viewer ]
+            \                                      /
+        HTTPS/WSS (443)                  HTTPS/WSS (443)
+              \                                /
+              [ VPS public  securicam.verdier-developpement.fr ]
+                          |
+        ┌─────────────────┼──────────────────────────┐
+        │                 │                          │
+   nginx (TLS)        coturn (TURN)              redis/db
+   ├─ /            → SPA Angular            (réseau interne docker)
+   ├─ /api         → Laravel (php-fpm)
+   ├─ /broadcasting/auth, /sanctum
+   └─ /app         → Reverb (WebSocket)
 ```
 
-### 2. Configurer le backend
+Le serveur **TURN/STUN coturn** est indispensable : sans relai TURN, les
+candidats ICE ne parviennent pas à traverser un NAT carrier-grade (4G, certains
+FAI). On expose donc :
+
+| Port           | Protocole | Rôle                                      |
+|----------------|-----------|-------------------------------------------|
+| 80             | TCP       | ACME (Let's Encrypt) + redirection HTTPS  |
+| 443            | TCP       | HTTPS + WSS                               |
+| 3478           | UDP+TCP   | STUN/TURN (signalisation)                 |
+| 49160-49200    | UDP       | TURN (média relayé)                       |
+
+## 2. Prérequis VPS
+
+- Ubuntu 22.04 LTS (ou équivalent)
+- 2 vCPU / 4 Go RAM minimum (4 vCPU / 8 Go recommandé selon le nombre de
+  flux WebRTC simultanés)
+- IP publique fixe
+- Enregistrement DNS `A` :
+  `securicam.verdier-developpement.fr` → `<IP_VPS>`
+
+### Installation Docker
 
 ```bash
-cd backend
-cp .env.example .env
-composer install
-# Générer une clé d'application
-php artisan key:generate
-```
-
-### 3. Lancer avec Docker Compose
-
-```bash
-cd ..
-docker-compose up -d
-```
-
-### 4. Initialiser la base de données
-
-```bash
-docker-compose exec backend php artisan migrate
-docker-compose exec backend php artisan db:seed
-```
-
-### 5. Accès
-
-- **Frontend Angular** : http://localhost:4200
-- **API Laravel** : http://localhost:8000
-- **WebSocket Reverb** : ws://localhost:8080
-
----
-
-## Déploiement production
-
-### Option A : Serveur dédié avec Nginx
-
-#### 1. Installation du serveur
-
-```bash
-# Ubuntu/Debian
+sudo apt update && sudo apt install -y ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+    sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+    https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | \
+    sudo tee /etc/apt/sources.list.d/docker.list
 sudo apt update
-sudo apt install nginx certbot python3-certbot-nginx
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker $USER
 ```
 
-#### 2. Configuration Nginx
-
-Créez `/etc/nginx/sites-available/securicam`:
-
-```nginx
-server {
-    listen 80;
-    server_name api.securicam.example.com;
-    return 301 https://$server_name$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name api.securicam.example.com;
-    
-    ssl_certificate /etc/letsencrypt/live/api.securicam.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/api.securicam.example.com/privkey.pem;
-    
-    root /var/www/securicam/backend/public;
-    index index.php;
-    
-    location / {
-        try_files $uri $uri/ /index.php?$query_string;
-    }
-    
-    location ~ \.php$ {
-        fastcgi_pass unix:/var/run/php/php8.3-fpm.sock;
-        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
-        include fastcgi_params;
-    }
-    
-    # WebSocket pour Reverb
-    location /app {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_read_timeout 86400;
-    }
-}
-```
-
-#### 3. SSL avec Let's Encrypt
+### Pare-feu (UFW)
 
 ```bash
-sudo certbot --nginx -d api.securicam.example.com
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow 22/tcp        # SSH
+sudo ufw allow 80,443/tcp    # HTTP + HTTPS
+sudo ufw allow 3478          # STUN/TURN
+sudo ufw allow 49160:49200/udp   # TURN media relay
+sudo ufw enable
 ```
 
-#### 4. Démarrer Reverb comme service
-
-Créez `/etc/systemd/system/securicam-reverb.service`:
-
-```ini
-[Unit]
-Description=Securicam Reverb WebSocket Server
-After=network.target
-
-[Service]
-User=www-data
-Group=www-data
-WorkingDirectory=/var/www/securicam/backend
-ExecStart=/usr/bin/php artisan reverb:start --host=127.0.0.1 --port=8080
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
+## 3. Récupération du code & configuration
 
 ```bash
-sudo systemctl enable securicam-reverb
-sudo systemctl start securicam-reverb
+sudo mkdir -p /opt/securicam && sudo chown $USER /opt/securicam
+git clone https://github.com/<vous>/securicam.git /opt/securicam
+cd /opt/securicam
+cp .env.prod.example .env.prod
 ```
 
-### Option B : Cloudflare Tunnel (recommandé pour simplicité)
+Éditer `.env.prod` :
 
-#### 1. Installer cloudflared
+- `PUBLIC_HOST=securicam.verdier-developpement.fr`
+- `PUBLIC_IP=<IP_publique_du_VPS>`
+- Générer la clef Laravel :
+  ```bash
+  docker run --rm -v "$PWD/backend:/app" -w /app composer:2 \
+      sh -c "composer install --no-dev --no-interaction && php artisan key:generate --show"
+  ```
+  Copier la valeur affichée dans `APP_KEY=base64:...`
+- Choisir des mots de passe forts pour `DB_*`, `TURN_PASSWORD`, `REDIS_PASSWORD`
+  (si activé), etc.
+
+## 4. Premier démarrage
+
+L'idée : lancer d'abord les services qui n'ont pas besoin de TLS pour permettre
+à certbot d'émettre le certificat, puis activer nginx HTTPS.
+
+### 4.1. Émission du certificat Let's Encrypt
 
 ```bash
-curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
-chmod +x cloudflared
-sudo mv cloudflared /usr/local/bin/
+# Démarre seulement nginx (qui sert temporairement /.well-known sur :80)
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build nginx
+
+# Émettre le certificat
+docker compose -f docker-compose.prod.yml run --rm certbot certonly \
+    --webroot -w /var/www/certbot \
+    -d securicam.verdier-developpement.fr \
+    --email votre-email@example.com \
+    --agree-tos --no-eff-email
+
+# Recharger nginx pour prendre en compte les nouveaux certificats
+docker compose -f docker-compose.prod.yml exec nginx nginx -s reload
 ```
 
-#### 2. Authentification
+### 4.2. Démarrage complet
 
 ```bash
-cloudflared tunnel login
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+docker compose -f docker-compose.prod.yml ps
 ```
 
-#### 3. Créer le tunnel
+Services attendus : `nginx`, `backend`, `reverb`, `db`, `redis`, `coturn`.
+
+### 4.3. Renouvellement automatique
+
+Crontab :
+
+```cron
+0 3 * * * cd /opt/securicam && docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm certbot renew && docker compose -f docker-compose.prod.yml --env-file .env.prod exec nginx nginx -s reload
+```
+
+## 5. Création des utilisateurs / caméras
 
 ```bash
-cloudflared tunnel create securicam
+docker compose -f docker-compose.prod.yml exec backend php artisan tinker
 ```
 
-#### 4. Configurer le tunnel
-
-Créez `~/.cloudflared/config.yml`:
-
-```yaml
-tunnel: securicam
-credentials-file: /root/.cloudflared/<TUNNEL_ID>.json
-
-ingress:
-  - hostname: api.securicam.example.com
-    service: http://localhost:8000
-  - hostname: ws.securicam.example.com
-    service: http://localhost:8080
-  - hostname: app.securicam.example.com
-    service: http://localhost:4200
-  - service: http_status:404
+```php
+$user = \App\Models\User::create([
+    'name' => 'Owner',
+    'email' => 'owner@example.com',
+    'password' => bcrypt('un_mot_de_passe_solide'),
+]);
+$camera = \App\Models\Camera::create([
+    'user_id' => $user->id,
+    'name' => 'Téléphone salon',
+]);
+$token = $user->createToken('android-camera')->plainTextToken;
+echo $token; // à reporter dans l'app Android
 ```
 
-#### 5. Démarrer le tunnel
+## 6. Configuration des clients
+
+### 6.1. Navigateur (viewer)
+
+Ouvrir https://securicam.verdier-developpement.fr , se connecter, sélectionner
+une caméra, panneau d'info → "Démarrer le streaming". Aucune configuration
+manuelle d'ICE n'est nécessaire : `environment.prod.ts` injecte déjà le STUN/TURN
+public.
+
+### 6.2. Téléphone Android (caméra)
+
+Dans l'application Securicam :
+
+| Champ              | Valeur                                                |
+|--------------------|-------------------------------------------------------|
+| Server URL         | `https://securicam.verdier-developpement.fr/api`      |
+| Auth token         | Le token Sanctum généré ci-dessus                     |
+| Camera ID          | L'ID de la caméra créée                               |
+| TURN Host          | `securicam.verdier-developpement.fr`                  |
+| TURN User          | Valeur de `TURN_USER` du `.env.prod`                  |
+| TURN Password      | Valeur de `TURN_PASSWORD` du `.env.prod`              |
+
+> Le build release de l'APK n'autorise que HTTPS (`network_security_config.xml`
+> base-config). Le build debug conserve l'autorisation cleartext pour le LAN
+> via `src/debug/res/xml/network_security_config.xml`.
+
+## 7. Diagnostic
 
 ```bash
-cloudflared tunnel run securicam
+# Logs nginx (TLS, requêtes)
+docker compose -f docker-compose.prod.yml logs -f nginx
+
+# Logs Laravel + Reverb
+docker compose -f docker-compose.prod.yml logs -f backend reverb
+
+# Test TURN depuis l'extérieur (https://webrtc.github.io/samples/src/content/peerconnection/trickle-ice/)
+#   STUN : stun:securicam.verdier-developpement.fr:3478
+#   TURN : turn:securicam.verdier-developpement.fr:3478, user/password de .env.prod
+# On doit voir des candidats "srflx" (STUN) et "relay" (TURN).
+
+# Logs coturn
+docker compose -f docker-compose.prod.yml logs -f coturn
 ```
 
----
-
-## Configuration Android
-
-### 1. Compiler l'APK
+## 8. Mise à jour
 
 ```bash
-cd android
-./gradlew assembleRelease
+cd /opt/securicam
+git pull
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+docker compose -f docker-compose.prod.yml exec backend php artisan migrate --force
 ```
-
-L'APK se trouve dans `app/build/outputs/apk/release/`
-
-### 2. Configurer l'application
-
-Sur le téléphone :
-1. Installer l'APK
-2. Entrer l'URL du serveur : `https://api.securicam.example.com/api`
-3. Générer un token d'authentification via l'API
-4. Entrer l'ID de la caméra
-5. Activer le démarrage automatique
-6. Suivre le guide d'exemption de batterie
-
----
-
-## Configuration production (.env)
-
-```env
-APP_ENV=production
-APP_DEBUG=false
-APP_URL=https://api.securicam.example.com
-
-FRONTEND_URL=https://app.securicam.example.com
-
-DB_CONNECTION=mysql
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_DATABASE=securicam
-DB_USERNAME=securicam
-DB_PASSWORD=strong_password_here
-
-BROADCAST_CONNECTION=reverb
-REVERB_APP_ID=securicam
-REVERB_APP_KEY=random_key_here
-REVERB_APP_SECRET=random_secret_here
-REVERB_HOST=ws.securicam.example.com
-REVERB_PORT=443
-REVERB_SCHEME=https
-```
-
----
-
-## Sécurité
-
-### Checklist
-
-- [ ] HTTPS activé partout
-- [ ] WSS pour WebSocket en production
-- [ ] Tokens d'authentification avec expiration
-- [ ] Pare-feu configuré (ports 80, 443 uniquement)
-- [ ] Mises à jour de sécurité automatiques
-- [ ] Sauvegardes régulières de la base de données
-
-### TURN Server (optionnel)
-
-Pour les réseaux avec NAT strict, installez coturn :
-
-```bash
-sudo apt install coturn
-```
-
-Configuration `/etc/turnserver.conf`:
-
-```
-listening-port=3478
-tls-listening-port=5349
-fingerprint
-lt-cred-mech
-user=securicam:password
-realm=securicam.example.com
-cert=/etc/letsencrypt/live/turn.securicam.example.com/fullchain.pem
-pkey=/etc/letsencrypt/live/turn.securicam.example.com/privkey.pem
-```
-
-Ajoutez les serveurs TURN dans la configuration WebRTC de l'app Android et du frontend Angular.
