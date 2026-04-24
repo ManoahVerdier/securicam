@@ -20,7 +20,7 @@ services:
     container_name: securicam-backend
     restart: unless-stopped
     working_dir: /var/www
-    command: sh -c "php artisan migrate --force && php artisan config:cache && php artisan route:cache && php artisan event:cache && php-fpm"
+    command: sh -c "chown www-data:www-data /var/www/database/database.sqlite 2>/dev/null; chmod 664 /var/www/database/database.sqlite 2>/dev/null; php artisan migrate --force && php artisan config:cache && php artisan route:cache && php artisan event:cache && php-fpm"
     volumes:
       - ./backend:/var/www
       - sqlite_data:/var/www/database
