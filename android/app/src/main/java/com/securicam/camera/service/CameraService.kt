@@ -86,8 +86,35 @@ class CameraService : LifecycleService() {
     val configuredCameraId: Int
         get() = cameraId
 
+    /** True while a reconnection attempt is in progress. */
+    var isReconnecting: Boolean = false
+        private set
+
     inner class LocalBinder : Binder() {
         fun getService(): CameraService = this@CameraService
+    }
+
+    /**
+     * Force a fresh signaling connection without restarting the whole service.
+     * Use this when the WebSocket was lost mid-session.
+     */
+    fun reconnect() {
+        if (isReconnecting) return
+        serviceScope.launch {
+            isReconnecting = true
+            try {
+                disconnectSignaling()
+                if (ensureSignalingConnected()) {
+                    signalingClient?.notifyConnect()
+                    startHeartbeat()
+                    Log.i(TAG, "Reconnected successfully")
+                } else {
+                    Log.w(TAG, "Reconnect failed")
+                }
+            } finally {
+                isReconnecting = false
+            }
+        }
     }
 
     override fun onBind(intent: Intent): IBinder {

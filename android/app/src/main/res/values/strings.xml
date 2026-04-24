@@ -43,4 +43,8 @@
     <!-- Notifications -->
     <string name="notification_title">Securicam Active</string>
     <string name="notification_text">Camera is streaming…</string>
+
+    <!-- Reconnect -->
+    <string name="reconnect">↺ Reconnecter</string>
+    <string name="reconnecting">Reconnexion en cours…</string>
 </resources>

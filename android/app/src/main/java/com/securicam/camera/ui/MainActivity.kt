@@ -156,6 +156,12 @@ class MainActivity : AppCompatActivity() {
         binding.btnBatterySettings.setOnClickListener {
             openBatterySettings()
         }
+
+        binding.btnReconnect.setOnClickListener {
+            val service = cameraService ?: return@setOnClickListener
+            binding.btnReconnect.isEnabled = false
+            service.reconnect()
+        }
     }
 
     private fun ensurePermissionsAndConnect() {
@@ -257,6 +263,17 @@ class MainActivity : AppCompatActivity() {
         binding.etTurnHost.isEnabled = !connected
         binding.etTurnUser.isEnabled = !connected
         binding.etTurnPassword.isEnabled = !connected
+
+        // Show reconnect button only when service is alive but signaling is lost.
+        val serviceAlive = service != null
+        val signalingLost = serviceAlive && !connected
+        val reconnecting = service?.isReconnecting == true
+        binding.btnReconnect.visibility = if (signalingLost) android.view.View.VISIBLE else android.view.View.GONE
+        binding.btnReconnect.isEnabled = !reconnecting
+        binding.btnReconnect.text = if (reconnecting)
+            getString(R.string.reconnecting)
+        else
+            getString(R.string.reconnect)
     }
 
     private fun startUiRefresh() {

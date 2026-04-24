@@ -271,4 +271,15 @@
         android:backgroundTint="@color/primary"
         style="@style/Widget.MaterialComponents.Button" />
 
+    <!-- Reconnect button: visible only when service is alive but signaling is lost -->
+    <Button
+        android:id="@+id/btnReconnect"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@string/reconnect"
+        android:visibility="gone"
+        android:backgroundTint="@color/button_secondary"
+        style="@style/Widget.MaterialComponents.Button" />
+
 </LinearLayout>
