@@ -31,7 +31,14 @@ endif
 # For production targets we source .env.prod into the shell so that variable
 # substitution inside docker-compose.prod.yml works regardless of whether the
 # installed docker-compose version supports --env-file.
-DC_PROD_BASE := $(DC) -f docker-compose.prod.yml
+# sudo is required on systems where the user is not in the docker group.
+SUDO := $(shell id -u)
+ifeq ($(SUDO),0)
+  DC_SUDO :=
+else
+  DC_SUDO := sudo
+endif
+DC_PROD_BASE := $(DC_SUDO) $(DC) -f docker-compose.prod.yml
 LOAD_PROD_ENV = set -a; . ./.env.prod; set +a
 
 PROJECT_DIR := $(shell pwd)
