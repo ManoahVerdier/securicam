@@ -91,7 +91,9 @@ class CameraService : LifecycleService() {
                 loadConfiguration(intent)
                 startForegroundService()
                 connectSignalingIfNeeded()
-                startStreamingIfNeeded()
+                serviceScope.launch {
+                    updateStatus("online")
+                }
             }
             ACTION_STOP -> {
                 stopStreaming(keepReady = false)
