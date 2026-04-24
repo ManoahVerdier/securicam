@@ -25,6 +25,11 @@ android/app/release/
 *.apk
 *.aab
 
+# Android release signing — NEVER commit
+android/app/keystore/*.keystore
+android/app/keystore/*.jks
+android/app/keystore/release.properties
+
 # Frontend
 frontend/node_modules/
 frontend/dist/

@@ -1,0 +1,41 @@
+# =============================================================================
+# Securicam — Angular SPA build image (one-shot, used in production deploy).
+#
+# Produces /app/dist/securicam-viewer/browser which is then copied to
+# /var/www/securicam-spa on the host (served by Apache).
+#
+# Usage (from the repo root, with .env.prod sourced):
+#   docker build -f docker/frontend/Dockerfile.build \
+#     --build-arg PUBLIC_HOST=$PUBLIC_HOST \
+#     --build-arg TURN_HOST=$TURN_HOST \
+#     --build-arg TURN_USER=$TURN_USER \
+#     --build-arg TURN_PASSWORD=$TURN_PASSWORD \
+#     -t securicam-spa-build .
+#   docker create --name securicam-spa-extract securicam-spa-build
+#   docker cp securicam-spa-extract:/app/dist/securicam-viewer/browser/. \
+#     /var/www/securicam-spa/
+#   docker rm securicam-spa-extract
+#
+# (the Makefile wraps all of this in `make prod-spa-build`)
+# =============================================================================
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY frontend/package*.json ./
+RUN npm ci --no-audit --no-fund
+
+COPY frontend/ ./
+
+ARG PUBLIC_HOST=securicam.example.com
+ARG TURN_HOST=securicam.example.com
+ARG TURN_USER=securicam
+ARG TURN_PASSWORD=changeme
+
+RUN sed -i \
+        -e "s|__PUBLIC_HOST__|${PUBLIC_HOST}|g" \
+        -e "s|__TURN_HOST__|${TURN_HOST}|g" \
+        -e "s|__TURN_USER__|${TURN_USER}|g" \
+        -e "s|__TURN_PASSWORD__|${TURN_PASSWORD}|g" \
+        src/environments/environment.prod.ts \
+ && npx ng build --configuration production
