@@ -61,7 +61,7 @@ prod-migrate:
 prod-key:
 	@echo "Generating Laravel APP_KEY (paste it into .env.prod):"
 	@docker run --rm -v "$(PROJECT_DIR)/backend:/app" -w /app composer:2 \
-		sh -c "composer install --no-dev --no-interaction --quiet && php artisan key:generate --show"
+		sh -c "composer install --no-dev --no-interaction --quiet --no-scripts && php artisan key:generate --show"
 
 # Build the Angular SPA inside a transient container, then copy artefacts to
 # $(SPA_DEPLOY_DIR). Reads PUBLIC_HOST/TURN_* from .env.prod.
