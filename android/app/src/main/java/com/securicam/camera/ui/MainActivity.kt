@@ -127,7 +127,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupListeners() {
         binding.btnStartStop.setOnClickListener {
-            if (cameraService?.isStreaming == true) {
+            if (cameraService?.isStreaming == true || isStartRequested) {
                 stopStreaming()
             } else {
                 checkPermissionsAndStart()
