@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y \
     libxml2-dev \
     zip \
     unzip \
-    && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd \
+    && docker-php-ext-install pdo_sqlite mbstring exif pcntl bcmath gd \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Redis extension
@@ -21,11 +21,15 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 # Set working directory
 WORKDIR /var/www
 
-# Copy existing application
+# Copy composer files first for better layer caching
+COPY composer.json composer.lock /var/www/
+RUN composer install --no-interaction --no-dev --prefer-dist --no-scripts --no-autoloader
+
+# Copy the rest of the application
 COPY . /var/www
 
-# Install dependencies
-RUN composer install --no-interaction --no-dev --prefer-dist
+# Generate optimised autoloader
+RUN composer dump-autoload --no-dev --optimize --no-scripts
 
 # Set permissions
 RUN chown -R www-data:www-data /var/www \
