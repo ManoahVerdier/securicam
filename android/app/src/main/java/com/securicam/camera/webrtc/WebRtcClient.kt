@@ -131,7 +131,10 @@ class WebRtcClient(
 
         try {
             videoCapturer?.initialize(surfaceTextureHelper, context, videoSource.capturerObserver)
-            videoCapturer?.startCapture(1280, 720, 30)
+            // Capture at Full HD (1080p, 30 fps). The actual transmitted resolution
+            // is also bounded by the SDP/encoder; see PeerConnection setup where we
+            // bump the maximum bitrate to keep this resolution sharp on Wi-Fi/4G.
+            videoCapturer?.startCapture(1920, 1080, 30)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize or start camera capture", e)
             throw IllegalStateException("Failed to initialize or start camera capture", e)
@@ -243,10 +246,29 @@ class WebRtcClient(
 
         // Add local tracks to peer connection
         localVideoTrack?.let {
-            peerConnection?.addTrack(it, listOf("stream"))
+            val sender = peerConnection?.addTrack(it, listOf("stream"))
+            sender?.let { configureVideoSender(it) }
         }
         localAudioTrack?.let {
             peerConnection?.addTrack(it, listOf("stream"))
+        }
+    }
+
+    /**
+     * Cap the encoder bitrate so 1080p30 stays sharp instead of being dropped to
+     * 500 kbps by libwebrtc's default. 4 Mbps fits a typical Wi-Fi / 4G uplink.
+     */
+    private fun configureVideoSender(sender: RtpSender) {
+        try {
+            val params = sender.parameters ?: return
+            params.encodings.forEach { enc ->
+                enc.maxBitrateBps = 4_000_000
+                enc.minBitrateBps = 1_000_000
+                enc.maxFramerate = 30
+            }
+            sender.parameters = params
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not tune video sender bitrate", e)
         }
     }
 

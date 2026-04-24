@@ -17,10 +17,22 @@ export class CaptureService {
 
   constructor(private http: HttpClient) {}
 
-  getCaptures(cameraId: number, page: number = 1, perPage: number = 20): Observable<CaptureListResponse> {
+  getCaptures(
+    cameraId: number,
+    page: number = 1,
+    perPage: number = 20,
+    type?: 'photo' | 'video'
+  ): Observable<CaptureListResponse> {
+    const params: Record<string, string> = {
+      page: page.toString(),
+      per_page: perPage.toString()
+    };
+    if (type) {
+      params['type'] = type;
+    }
     return this.http.get<CaptureListResponse>(
       `${this.apiUrl}/cameras/${cameraId}/captures`,
-      { params: { page: page.toString(), per_page: perPage.toString() } }
+      { params }
     );
   }
 

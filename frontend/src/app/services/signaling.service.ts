@@ -4,7 +4,7 @@ import Echo from 'laravel-echo';
 import Pusher from 'pusher-js';
 import { environment } from '../../environments/environment';
 import { AuthService } from './auth.service';
-import { WebRtcOffer, WebRtcAnswer, WebRtcIceCandidate } from '../models';
+import { WebRtcOffer, WebRtcAnswer, WebRtcIceCandidate, Capture } from '../models';
 
 @Injectable({
   providedIn: 'root'
@@ -17,11 +17,15 @@ export class SignalingService implements OnDestroy {
   private answerSubject = new Subject<WebRtcAnswer>();
   private iceCandidateSubject = new Subject<WebRtcIceCandidate>();
   private connectionStatusSubject = new Subject<boolean>();
+  private captureCreatedSubject = new Subject<{ cameraId: number; capture: Capture }>();
 
   readonly offers$: Observable<WebRtcOffer> = this.offerSubject.asObservable();
   readonly answers$: Observable<WebRtcAnswer> = this.answerSubject.asObservable();
   readonly iceCandidates$: Observable<WebRtcIceCandidate> = this.iceCandidateSubject.asObservable();
   readonly connectionStatus$: Observable<boolean> = this.connectionStatusSubject.asObservable();
+  /** Stream of newly uploaded captures, broadcast by the backend on `camera.{id}`. */
+  readonly captureCreated$: Observable<{ cameraId: number; capture: Capture }> =
+    this.captureCreatedSubject.asObservable();
 
   constructor(private authService: AuthService) {}
 
@@ -133,6 +137,13 @@ export class SignalingService implements OnDestroy {
       this.iceCandidateSubject.next(data);
     });
 
+    channel.listen('.capture.created', (data: { capture: Capture }) => {
+      console.info(`[Signaling] Capture created for camera ${cameraId}`, data.capture?.id);
+      if (data?.capture) {
+        this.captureCreatedSubject.next({ cameraId, capture: data.capture });
+      }
+    });
+
     this.channels.set(cameraId, channel);
   }
 
@@ -150,5 +161,6 @@ export class SignalingService implements OnDestroy {
     this.answerSubject.complete();
     this.iceCandidateSubject.complete();
     this.connectionStatusSubject.complete();
+    this.captureCreatedSubject.complete();
   }
 }

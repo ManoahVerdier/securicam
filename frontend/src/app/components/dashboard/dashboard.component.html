@@ -89,6 +89,23 @@
             >
               ▶ Démarrer le streaming
             </button>
+
+            <div class="gallery-shortcuts">
+              <button
+                type="button"
+                class="gallery-btn"
+                (click)="openGallery('photo')"
+              >
+                📷 Captures
+              </button>
+              <button
+                type="button"
+                class="gallery-btn"
+                (click)="openGallery('video')"
+              >
+                🎥 Enregistrements
+              </button>
+            </div>
           </div>
         </ng-container>
 
@@ -103,6 +120,15 @@
           ></app-capture-controls>
 
           <app-gallery [camera]="selectedCamera"></app-gallery>
+        </ng-container>
+
+        <ng-container *ngIf="viewMode === 'gallery'">
+          <button class="stop-stream-btn" (click)="backToInfo()">⬅ Retour aux infos</button>
+          <app-gallery
+            [camera]="selectedCamera"
+            [filterType]="galleryFilter"
+            [title]="galleryFilter === 'video' ? 'Enregistrements' : (galleryFilter === 'photo' ? 'Captures' : 'Galerie')"
+          ></app-gallery>
         </ng-container>
       </div>
     </main>

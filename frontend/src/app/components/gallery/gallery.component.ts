@@ -1,7 +1,8 @@
-import { Component, Input, OnInit } from '@angular/core';
+import { Component, Input, OnDestroy, OnInit, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { Subscription } from 'rxjs';
 import { Camera, Capture, CaptureListResponse } from '../../models';
-import { CaptureService } from '../../services';
+import { CaptureService, SignalingService } from '../../services';
 
 @Component({
   selector: 'app-gallery',
@@ -10,8 +11,12 @@ import { CaptureService } from '../../services';
   templateUrl: './gallery.component.html',
   styleUrl: './gallery.component.scss'
 })
-export class GalleryComponent implements OnInit {
+export class GalleryComponent implements OnInit, OnChanges, OnDestroy {
   @Input({ required: true }) camera!: Camera;
+  /** Optional filter — when set, only that type is fetched and shown. */
+  @Input() filterType?: 'photo' | 'video';
+  /** Optional title override (defaults to "Captures"). */
+  @Input() title?: string;
 
   captures: Capture[] = [];
   isLoading = true;
@@ -20,19 +25,55 @@ export class GalleryComponent implements OnInit {
   totalPages = 1;
   selectedCapture: Capture | null = null;
 
-  constructor(private captureService: CaptureService) {}
+  private liveSub?: Subscription;
+
+  constructor(
+    private captureService: CaptureService,
+    private signaling: SignalingService
+  ) {}
 
   ngOnInit(): void {
     this.loadCaptures();
+    this.subscribeToLiveCaptures();
+  }
+
+  ngOnChanges(changes: SimpleChanges): void {
+    if ((changes['camera'] && !changes['camera'].firstChange) ||
+        (changes['filterType'] && !changes['filterType'].firstChange)) {
+      this.loadCaptures();
+    }
+  }
+
+  ngOnDestroy(): void {
+    this.liveSub?.unsubscribe();
+  }
+
+  /** Push newly uploaded captures to the top of the grid in real time. */
+  private subscribeToLiveCaptures(): void {
+    this.liveSub = this.signaling.captureCreated$.subscribe(({ cameraId, capture }) => {
+      if (cameraId !== this.camera.id) {
+        return;
+      }
+      if (this.filterType && capture.type !== this.filterType) {
+        return;
+      }
+      // Avoid duplicates if the API call already returned this capture.
+      if (this.captures.some(c => c.id === capture.id)) {
+        return;
+      }
+      this.captures = [capture, ...this.captures];
+    });
   }
 
   loadCaptures(page: number = 1): void {
     this.isLoading = true;
     this.hasError = false;
 
-    this.captureService.getCaptures(this.camera.id, page).subscribe({
+    this.captureService.getCaptures(this.camera.id, page, 20, this.filterType).subscribe({
       next: (response: CaptureListResponse) => {
-        this.captures = response.data;
+        this.captures = page === 1
+          ? response.data
+          : [...this.captures, ...response.data];
         this.currentPage = response.current_page;
         this.totalPages = response.last_page;
         this.isLoading = false;

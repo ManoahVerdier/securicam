@@ -22,10 +22,12 @@ import { GalleryComponent } from '../gallery/gallery.component';
 export class DashboardComponent implements OnInit, OnDestroy {
   cameras: Camera[] = [];
   selectedCamera: Camera | null = null;
-  viewMode: 'info' | 'stream' = 'info';
+  viewMode: 'info' | 'stream' | 'gallery' = 'info';
+  galleryFilter: 'photo' | 'video' | undefined;
   isLoading = true;
   error = '';
   private pollingHandle: ReturnType<typeof setInterval> | null = null;
+  private joinedChannelCameraId: number | null = null;
 
   constructor(
     private authService: AuthService,
@@ -45,6 +47,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
       clearInterval(this.pollingHandle);
       this.pollingHandle = null;
     }
+    this.leaveCurrentChannel();
     this.signalingService.disconnect();
   }
 
@@ -75,8 +78,33 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   selectCamera(camera: Camera): void {
+    if (this.selectedCamera?.id !== camera.id) {
+      this.leaveCurrentChannel();
+    }
     this.selectedCamera = camera;
     this.viewMode = 'info';
+    this.galleryFilter = undefined;
+    // Join the camera private channel so the gallery receives `.capture.created`
+    // events even when the user is not actively streaming.
+    this.joinSelectedChannel();
+  }
+
+  private joinSelectedChannel(): void {
+    if (!this.selectedCamera) {
+      return;
+    }
+    if (this.joinedChannelCameraId === this.selectedCamera.id) {
+      return;
+    }
+    this.signalingService.joinCameraChannel(this.selectedCamera.id);
+    this.joinedChannelCameraId = this.selectedCamera.id;
+  }
+
+  private leaveCurrentChannel(): void {
+    if (this.joinedChannelCameraId !== null) {
+      this.signalingService.leaveChannel(this.joinedChannelCameraId);
+      this.joinedChannelCameraId = null;
+    }
   }
 
   startStreaming(): void {
@@ -84,6 +112,18 @@ export class DashboardComponent implements OnInit, OnDestroy {
       return;
     }
     this.viewMode = 'stream';
+  }
+
+  openGallery(filter?: 'photo' | 'video'): void {
+    if (!this.selectedCamera) {
+      return;
+    }
+    this.galleryFilter = filter;
+    this.viewMode = 'gallery';
+  }
+
+  backToInfo(): void {
+    this.viewMode = 'info';
   }
 
   stopStreaming(): void {

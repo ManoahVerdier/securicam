@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Camera;
 use App\Models\Capture;
 use App\Events\CapturePhoto;
+use App\Events\CaptureCreated;
 use App\Events\VideoRecordingStart;
 use App\Events\VideoRecordingStop;
 use Illuminate\Http\JsonResponse;
@@ -21,9 +22,15 @@ class CaptureController extends Controller
     {
         $this->authorize('view', $camera);
 
-        $captures = $camera->captures()
-            ->orderByDesc('captured_at')
-            ->paginate($request->input('per_page', 20));
+        $query = $camera->captures()->orderByDesc('captured_at');
+
+        // Optional ?type=photo|video filter for the dedicated gallery views.
+        $type = $request->input('type');
+        if (in_array($type, ['photo', 'video'], true)) {
+            $query->where('type', $type);
+        }
+
+        $captures = $query->paginate($request->input('per_page', 20));
 
         return response()->json($captures);
     }
@@ -160,6 +167,9 @@ class CaptureController extends Controller
             'file_size' => $request->file('file')->getSize(),
             'captured_at' => $validated['captured_at'] ?? now(),
         ]);
+
+        // Notify the viewer's gallery in real time so it doesn't have to poll.
+        broadcast(new CaptureCreated($capture));
 
         return response()->json([
             'message' => 'Capture stored successfully',
