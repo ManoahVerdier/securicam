@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Securicam</string>
-    
+
     <!-- Status -->
     <string name="status_streaming">Streaming en cours</string>
     <string name="status_stopped">Stopped</string>
@@ -33,13 +33,13 @@
     <!-- Info -->
     <string name="local_ip_format">IP locale : %1$s</string>
     <string name="server_info_format">Serveur : %1$s</string>
-    
+
     <!-- Battery Optimization -->
     <string name="battery_optimization_title">Battery Optimization</string>
     <string name="battery_optimization_message">To ensure reliable camera streaming, please disable battery optimization for this app. This prevents Android from killing the camera service in the background.</string>
     <string name="open_settings">Open Settings</string>
     <string name="later">Later</string>
-    
+
     <!-- Notifications -->
     <string name="notification_title">Securicam Active</string>
     <string name="notification_text">Camera is streaming…</string>

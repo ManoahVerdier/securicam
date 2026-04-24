@@ -60,7 +60,7 @@ class WebRtcClient(
     private var videoCapturer: CameraVideoCapturer? = null
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
     private var eglBase: EglBase? = null
-    
+
     private var iceCandidateCallback: ((IceCandidate) -> Unit)? = null
     private var connectionStateCallback: ((Boolean) -> Unit)? = null
     private val executor = Executors.newSingleThreadExecutor()
@@ -81,7 +81,7 @@ class WebRtcClient(
         val options = PeerConnectionFactory.InitializationOptions.builder(context)
             .setEnableInternalTracer(true)
             .createInitializationOptions()
-        
+
         PeerConnectionFactory.initialize(options)
 
         eglBase = try {
@@ -99,7 +99,7 @@ class WebRtcClient(
             true,
             true
         )
-        
+
         val decoderFactory = DefaultVideoDecoderFactory(eglBaseContext)
 
         peerConnectionFactory = PeerConnectionFactory.builder()
@@ -117,13 +117,13 @@ class WebRtcClient(
         localVideoSource = factory.createVideoSource(false)
         val videoSource = localVideoSource
             ?: throw IllegalStateException("Failed to create local video source")
-        
+
         // Create video capturer
         val eglBaseContext = eglBase?.eglBaseContext
             ?: throw IllegalStateException("EGL base context is unavailable")
         surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", eglBaseContext)
             ?: throw IllegalStateException("Failed to create SurfaceTextureHelper")
-        
+
         videoCapturer = createCameraCapturer()
             ?: throw IllegalStateException(
                 "No camera capturer available. Verify camera permission is granted and camera hardware is not in use by another app."
@@ -136,11 +136,11 @@ class WebRtcClient(
             Log.e(TAG, "Failed to initialize or start camera capture", e)
             throw IllegalStateException("Failed to initialize or start camera capture", e)
         }
-        
+
         // Create video track
         localVideoTrack = factory.createVideoTrack("video_track", videoSource)
         localVideoTrack?.setEnabled(true)
-        
+
         // Audio is intentionally disabled: stream-webrtc-android currently emits an SDP
         // audio section that Chrome rejects ("a=ssrc ... msid:stream audio_track Invalid SDP line").
         // Video-only streaming is sufficient for the surveillance use case.
@@ -148,21 +148,21 @@ class WebRtcClient(
 
     private fun createCameraCapturer(): CameraVideoCapturer? {
         val enumerator = Camera2Enumerator(context)
-        
+
         // Try back camera first
         for (deviceName in enumerator.deviceNames) {
             if (enumerator.isBackFacing(deviceName)) {
                 return enumerator.createCapturer(deviceName, null)
             }
         }
-        
+
         // Fallback to front camera
         for (deviceName in enumerator.deviceNames) {
             if (enumerator.isFrontFacing(deviceName)) {
                 return enumerator.createCapturer(deviceName, null)
             }
         }
-        
+
         return null
     }
 
@@ -276,7 +276,7 @@ class WebRtcClient(
             }
 
             override fun onSetSuccess() {}
-            
+
             override fun onCreateFailure(error: String?) {
                 Log.e(TAG, "Failed to create offer: $error")
             }
@@ -299,7 +299,7 @@ class WebRtcClient(
 
     fun handleAnswer(sdp: String) {
         val sessionDescription = SessionDescription(SessionDescription.Type.ANSWER, sdp)
-        
+
         peerConnection?.setRemoteDescription(object : SdpObserver {
             override fun onCreateSuccess(sdp: SessionDescription?) {}
             override fun onSetSuccess() {
@@ -342,7 +342,7 @@ class WebRtcClient(
             try {
                 stopCaptureSafely()
                 releaseResources()
-                
+
                 Log.d(TAG, "WebRTC resources released")
             } catch (e: Exception) {
                 Log.e(TAG, "Error releasing WebRTC resources", e)
