@@ -19,17 +19,20 @@
 #   make apk-debug           - debug APK (cleartext LAN allowed)
 #   make apk-release         - signed release APK (HTTPS-only)
 
-DC      := docker compose
-DC_PROD := docker compose -f docker-compose.prod.yml --env-file .env.prod
+DC := docker compose
 
-# Auto-detect: fall back to legacy docker-compose v1 if the plugin is absent.
+# Auto-detect: fall back to legacy docker-compose v1 if the compose plugin is absent.
 ifeq ($(shell docker compose version > /dev/null 2>&1; echo $$?),0)
-  DC      := docker compose
-  DC_PROD := docker compose -f docker-compose.prod.yml --env-file .env.prod
+  DC := docker compose
 else
-  DC      := docker-compose
-  DC_PROD := docker-compose -f docker-compose.prod.yml --env-file .env.prod
+  DC := docker-compose
 endif
+
+# For production targets we source .env.prod into the shell so that variable
+# substitution inside docker-compose.prod.yml works regardless of whether the
+# installed docker-compose version supports --env-file.
+DC_PROD_BASE := $(DC) -f docker-compose.prod.yml
+LOAD_PROD_ENV = set -a; . ./.env.prod; set +a
 
 PROJECT_DIR := $(shell pwd)
 SPA_DEPLOY_DIR ?= /var/www/securicam-spa
@@ -56,16 +59,17 @@ dev-shell:
 .PHONY: prod-up prod-down prod-logs prod-migrate prod-key prod-spa-build prod-cert prod-renew
 
 prod-up:
-	$(DC_PROD) up -d --build
+	@if [ ! -f .env.prod ]; then echo "ERROR: .env.prod not found"; exit 1; fi
+	$(LOAD_PROD_ENV); $(DC_PROD_BASE) up -d --build
 
 prod-down:
-	$(DC_PROD) down
+	$(LOAD_PROD_ENV); $(DC_PROD_BASE) down
 
 prod-logs:
-	$(DC_PROD) logs -f $(SVC)
+	$(LOAD_PROD_ENV); $(DC_PROD_BASE) logs -f $(SVC)
 
 prod-migrate:
-	$(DC_PROD) exec backend php artisan migrate --force
+	$(LOAD_PROD_ENV); $(DC_PROD_BASE) exec backend php artisan migrate --force
 
 prod-key:
 	@echo "Generating Laravel APP_KEY (paste it into .env.prod):"
