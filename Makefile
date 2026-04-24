@@ -22,6 +22,15 @@
 DC      := docker compose
 DC_PROD := docker compose -f docker-compose.prod.yml --env-file .env.prod
 
+# Auto-detect: fall back to legacy docker-compose v1 if the plugin is absent.
+ifeq ($(shell docker compose version > /dev/null 2>&1; echo $$?),0)
+  DC      := docker compose
+  DC_PROD := docker compose -f docker-compose.prod.yml --env-file .env.prod
+else
+  DC      := docker-compose
+  DC_PROD := docker-compose -f docker-compose.prod.yml --env-file .env.prod
+endif
+
 PROJECT_DIR := $(shell pwd)
 SPA_DEPLOY_DIR ?= /var/www/securicam-spa
 
