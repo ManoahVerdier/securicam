@@ -36,7 +36,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var binding: ActivityMainBinding
-    
+
     private var cameraService: CameraService? = null
     private var isServiceBound = false
     private var isStartRequested = false
@@ -220,7 +220,7 @@ class MainActivity : AppCompatActivity() {
             startRequestedAtMillis = 0L
         }
         val shouldShowStop = isStreaming || isStartRequested
-        
+
         binding.btnStartStop.text = if (shouldShowStop) {
             getString(R.string.stop_streaming)
         } else {
@@ -258,7 +258,7 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
             val packageName = packageName
-            
+
             if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
                 showBatteryOptimizationDialog()
             }
