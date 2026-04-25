@@ -249,6 +249,7 @@ class MainActivity : AppCompatActivity() {
         binding.tvStatus.text = when {
             streaming -> getString(R.string.status_streaming)
             connected -> getString(R.string.status_connected)
+            service?.isConnecting == true || service?.isReconnecting == true -> getString(R.string.status_connecting)
             else -> getString(R.string.status_disconnected)
         }
 

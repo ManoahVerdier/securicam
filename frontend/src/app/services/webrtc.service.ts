@@ -23,6 +23,11 @@ export class WebrtcService implements OnDestroy {
   private peerConnections: Map<number, RTCPeerConnection> = new Map();
   private remoteStreams: Map<number, MediaStream> = new Map();
   private iceRestartAttempts: Map<number, number> = new Map();
+  // ICE candidates that arrived before setRemoteDescription() finished. We must
+  // queue them — calling addIceCandidate() with a null remote description throws
+  // "InvalidStateError: The remote description was null".
+  private pendingIceCandidates: Map<number, RTCIceCandidateInit[]> = new Map();
+  private remoteDescriptionSet: Set<number> = new Set();
 
   private stateSubject = new Subject<WebRtcState>();
   private streamSubject = new Subject<{ cameraId: number; stream: MediaStream }>();
@@ -192,6 +197,8 @@ export class WebrtcService implements OnDestroy {
     }
 
     this.iceRestartAttempts.delete(cameraId);
+    this.pendingIceCandidates.delete(cameraId);
+    this.remoteDescriptionSet.delete(cameraId);
     this.signalingService.leaveChannel(cameraId);
   }
 
@@ -222,14 +229,32 @@ export class WebrtcService implements OnDestroy {
     try {
       console.info(`[WebRTC] Applying remote offer for camera ${cameraId}`);
       await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp }));
+      this.remoteDescriptionSet.add(cameraId);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       console.info(`[WebRTC] Sending answer for camera ${cameraId}`);
 
       // Send answer back through API
       this.sendAnswer(cameraId, answer.sdp!);
+
+      // Flush any ICE candidates queued before the remote description was set.
+      await this.flushPendingIceCandidates(cameraId, pc);
     } catch (error) {
       console.error('Error handling offer:', error);
+    }
+  }
+
+  private async flushPendingIceCandidates(cameraId: number, pc: RTCPeerConnection): Promise<void> {
+    const queued = this.pendingIceCandidates.get(cameraId);
+    if (!queued || queued.length === 0) return;
+    console.info(`[WebRTC] Flushing ${queued.length} buffered ICE candidate(s) for camera ${cameraId}`);
+    this.pendingIceCandidates.delete(cameraId);
+    for (const candidate of queued) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (error) {
+        console.error('Error adding buffered ICE candidate:', error);
+      }
     }
   }
 
@@ -237,6 +262,16 @@ export class WebrtcService implements OnDestroy {
     const pc = this.peerConnections.get(cameraId);
     if (!pc) {
       console.warn(`[WebRTC] Ignoring ICE candidate for camera ${cameraId}: no peer connection`);
+      return;
+    }
+
+    // Buffer candidates that arrive before the remote description is set —
+    // addIceCandidate() throws otherwise.
+    if (!this.remoteDescriptionSet.has(cameraId) || !pc.remoteDescription) {
+      const queue = this.pendingIceCandidates.get(cameraId) ?? [];
+      queue.push(candidate);
+      this.pendingIceCandidates.set(cameraId, queue);
+      console.info(`[WebRTC] Buffering ICE candidate for camera ${cameraId} (remote description not yet set)`);
       return;
     }
 

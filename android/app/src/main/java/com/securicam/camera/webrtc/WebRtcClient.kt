@@ -65,6 +65,23 @@ class WebRtcClient(
     private var connectionStateCallback: ((Boolean) -> Unit)? = null
     private val executor = Executors.newSingleThreadExecutor()
 
+    /** True when the active capturer is currently aimed at the front-facing lens. */
+    @Volatile
+    var isFrontCameraActive: Boolean = false
+        private set
+
+    /** Last frame dimensions reported by the capture pipeline (for recorder hints). */
+    @Volatile
+    var lastFrameWidth: Int = 1920
+        private set
+    @Volatile
+    var lastFrameHeight: Int = 1080
+        private set
+
+    /** Shared EGL context required to feed an external encoder/preview Surface. */
+    val eglBaseContext: EglBase.Context?
+        get() = eglBase?.eglBaseContext
+
     init {
         try {
             initializePeerConnectionFactory()
@@ -155,6 +172,7 @@ class WebRtcClient(
         // Try back camera first
         for (deviceName in enumerator.deviceNames) {
             if (enumerator.isBackFacing(deviceName)) {
+                isFrontCameraActive = false
                 return enumerator.createCapturer(deviceName, null)
             }
         }
@@ -162,11 +180,60 @@ class WebRtcClient(
         // Fallback to front camera
         for (deviceName in enumerator.deviceNames) {
             if (enumerator.isFrontFacing(deviceName)) {
+                isFrontCameraActive = true
                 return enumerator.createCapturer(deviceName, null)
             }
         }
 
         return null
+    }
+
+    /**
+     * Switch between the front-facing and rear-facing lenses without tearing
+     * down the WebRTC peer connection. Safe to call from any thread — libwebrtc
+     * dispatches the switch on the capturer's internal handler.
+     */
+    fun switchCamera(onResult: (success: Boolean, isFront: Boolean) -> Unit = { _, _ -> }) {
+        val capturer = videoCapturer
+        if (capturer == null) {
+            onResult(false, isFrontCameraActive)
+            return
+        }
+        try {
+            capturer.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
+                override fun onCameraSwitchDone(isFrontFacing: Boolean) {
+                    isFrontCameraActive = isFrontFacing
+                    Log.i(TAG, "Camera switched: isFront=$isFrontFacing")
+                    onResult(true, isFrontFacing)
+                }
+
+                override fun onCameraSwitchError(errorDescription: String?) {
+                    Log.e(TAG, "Camera switch failed: $errorDescription")
+                    onResult(false, isFrontCameraActive)
+                }
+            })
+        } catch (e: Exception) {
+            Log.e(TAG, "switchCamera threw", e)
+            onResult(false, isFrontCameraActive)
+        }
+    }
+
+    /** Attach an extra [VideoSink] (photo/video recorder) to the live track. */
+    fun addVideoSink(sink: VideoSink) {
+        try {
+            localVideoTrack?.addSink(sink)
+        } catch (e: Exception) {
+            Log.w(TAG, "addVideoSink failed", e)
+        }
+    }
+
+    /** Detach a sink previously registered via [addVideoSink]. */
+    fun removeVideoSink(sink: VideoSink) {
+        try {
+            localVideoTrack?.removeSink(sink)
+        } catch (e: Exception) {
+            Log.w(TAG, "removeVideoSink failed", e)
+        }
     }
 
     private fun createPeerConnection() {
@@ -256,15 +323,22 @@ class WebRtcClient(
 
     /**
      * Cap the encoder bitrate so 1080p30 stays sharp instead of being dropped to
-     * 500 kbps by libwebrtc's default. 4 Mbps fits a typical Wi-Fi / 4G uplink.
+     * 500 kbps by libwebrtc's default. 6 Mbps is comfortable for a 1080p feed on
+     * a typical Wi-Fi / 4G uplink and visibly improves perceived sharpness.
      */
     private fun configureVideoSender(sender: RtpSender) {
         try {
             val params = sender.parameters ?: return
             params.encodings.forEach { enc ->
-                enc.maxBitrateBps = 4_000_000
-                enc.minBitrateBps = 1_000_000
+                enc.maxBitrateBps = 6_000_000
+                enc.minBitrateBps = 1_500_000
                 enc.maxFramerate = 30
+            }
+            // Prefer keeping resolution sharp over framerate when uplink is constrained.
+            try {
+                params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
+            } catch (e: Throwable) {
+                Log.d(TAG, "degradationPreference not available on this WebRTC build")
             }
             sender.parameters = params
         } catch (e: Exception) {

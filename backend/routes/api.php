@@ -55,6 +55,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/video/start', [CaptureController::class, 'startVideo']);
         Route::post('/video/stop', [CaptureController::class, 'stopVideo']);
         Route::post('/upload', [CaptureController::class, 'store']);
+        Route::post('/switch-camera', [CaptureController::class, 'switchCamera']);
     });
 
     // Camera captures

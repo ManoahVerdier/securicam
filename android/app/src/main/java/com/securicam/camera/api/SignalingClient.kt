@@ -9,9 +9,12 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.webrtc.IceCandidate
+import java.io.File
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -47,6 +50,7 @@ class SignalingClient(
     private var onStopStreamingCallback: (() -> Unit)? = null
     private var onStartRecordingCallback: (() -> Unit)? = null
     private var onStopRecordingCallback: (() -> Unit)? = null
+    private var onSwitchCameraCallback: (() -> Unit)? = null
     private var connectionReadyDeferred: CompletableDeferred<Boolean>? = null
     private var socketId: String? = null
 
@@ -59,6 +63,7 @@ class SignalingClient(
         onStopStreaming: () -> Unit,
         onStartRecording: () -> Unit,
         onStopRecording: () -> Unit,
+        onSwitchCamera: () -> Unit = {},
         timeoutMs: Long = 10_000L,
         onError: (String) -> Unit = {}
     ): Boolean {
@@ -70,6 +75,7 @@ class SignalingClient(
         onStopStreamingCallback = onStopStreaming
         onStartRecordingCallback = onStartRecording
         onStopRecordingCallback = onStopRecording
+        onSwitchCameraCallback = onSwitchCamera
         connectionReadyDeferred = CompletableDeferred()
 
         val wsUrl = buildWebSocketUrl()
@@ -289,6 +295,9 @@ class SignalingClient(
                 "video.recording.stop" -> {
                     onStopRecordingCallback?.invoke()
                 }
+                "camera.switch" -> {
+                    onSwitchCameraCallback?.invoke()
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error handling message", e)
@@ -374,6 +383,59 @@ class SignalingClient(
             return@withContext false
         }
         return@withContext makeRequest(url, JsonObject())
+    }
+
+    /**
+     * Upload a photo or recorded video as a multipart capture. Returns true on
+     * HTTP 2xx. The backend stores the file and broadcasts a CaptureCreated event.
+     */
+    suspend fun uploadCapture(
+        type: String,
+        file: File,
+        durationSeconds: Long? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        val url = buildApiUrl("/captures/upload") ?: run {
+            Log.e(TAG, "Failed to upload capture: invalid server URL '$serverUrl'")
+            return@withContext false
+        }
+
+        val mediaType = when (type) {
+            "photo" -> "image/jpeg".toMediaTypeOrNull()
+            "video" -> "video/mp4".toMediaTypeOrNull()
+            else -> "application/octet-stream".toMediaTypeOrNull()
+        }
+
+        val builder = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("camera_id", cameraId.toString())
+            .addFormDataPart("type", type)
+            .addFormDataPart(
+                "file",
+                file.name,
+                file.asRequestBody(mediaType)
+            )
+        if (durationSeconds != null) {
+            builder.addFormDataPart("duration", durationSeconds.toString())
+        }
+
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("Authorization", "Bearer $authToken")
+            .addHeader("Accept", "application/json")
+            .post(builder.build())
+            .build()
+
+        return@withContext try {
+            val response = httpClient.newCall(request).execute()
+            response.isSuccessful.also {
+                if (!it) {
+                    Log.e(TAG, "Capture upload failed: ${response.code} - ${response.body?.string()}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Capture upload error", e)
+            false
+        }
     }
 
     private fun makeRequest(url: String, body: JsonObject, method: String = "POST"): Boolean {

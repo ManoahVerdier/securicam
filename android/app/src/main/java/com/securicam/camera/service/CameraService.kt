@@ -25,11 +25,14 @@ import androidx.lifecycle.LifecycleService
 import com.securicam.camera.R
 import com.securicam.camera.SecuricamApp
 import com.securicam.camera.ui.MainActivity
+import com.securicam.camera.webrtc.PhotoCapturer
+import com.securicam.camera.webrtc.VideoRecorder
 import com.securicam.camera.webrtc.WebRtcClient
 import com.securicam.camera.api.SignalingClient
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -73,6 +76,8 @@ class CameraService : LifecycleService() {
     private var isStreamStarting: Boolean = false
     private val signalingConnectMutex = Mutex()
     private var lastRenegotiationAt: Long = 0L
+    private var activeRecorder: VideoRecorder? = null
+    private var activePhotoCapturer: PhotoCapturer? = null
 
     var isStreaming: Boolean = false
         private set
@@ -277,6 +282,9 @@ class CameraService : LifecycleService() {
                 onStopRecording = {
                     stopRecording()
                 },
+                onSwitchCamera = {
+                    switchPhoneCamera()
+                },
                 onError = { error ->
                     Log.e(TAG, "Signaling error: $error")
                 }
@@ -434,21 +442,124 @@ class CameraService : LifecycleService() {
     }
 
     private fun capturePhoto() {
-        // Photo capture implementation
         Log.d(TAG, "Capturing photo...")
-        // TODO: Implement photo capture with CameraX ImageCapture
+        val client = webRtcClient
+        if (client == null) {
+            Log.w(TAG, "capturePhoto: WebRTC client not initialized; ignoring")
+            return
+        }
+        if (activePhotoCapturer != null) {
+            Log.d(TAG, "capturePhoto: already in progress")
+            return
+        }
+
+        val outDir = File(filesDir, "captures").apply { mkdirs() }
+        val photoFile = File(outDir, "photo_${System.currentTimeMillis()}.jpg")
+
+        val capturer = PhotoCapturer(
+            onPhoto = { jpegBytes, _, _ ->
+                serviceScope.launch {
+                    try {
+                        photoFile.writeBytes(jpegBytes)
+                        val ok = signalingClient?.uploadCapture(
+                            type = "photo",
+                            file = photoFile
+                        ) ?: false
+                        Log.i(TAG, "Photo upload ${if (ok) "OK" else "FAILED"} (${photoFile.length()} bytes)")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to save/upload photo", e)
+                    } finally {
+                        photoFile.delete()
+                        activePhotoCapturer?.let { client.removeVideoSink(it) }
+                        activePhotoCapturer = null
+                    }
+                }
+            },
+            onError = { error ->
+                Log.e(TAG, "Photo capture error", error)
+                activePhotoCapturer?.let { client.removeVideoSink(it) }
+                activePhotoCapturer = null
+            }
+        )
+
+        activePhotoCapturer = capturer
+        client.addVideoSink(capturer)
     }
 
     private fun startRecording() {
-        // Video recording implementation
         Log.d(TAG, "Starting recording...")
-        // TODO: Implement video recording with CameraX VideoCapture
+        val client = webRtcClient
+        if (client == null) {
+            Log.w(TAG, "startRecording: WebRTC client not initialized; ignoring")
+            return
+        }
+        if (activeRecorder != null) {
+            Log.d(TAG, "startRecording: already recording")
+            return
+        }
+        val eglContext = client.eglBaseContext
+        if (eglContext == null) {
+            Log.e(TAG, "startRecording: no EGL context available")
+            return
+        }
+
+        val outDir = File(filesDir, "captures").apply { mkdirs() }
+        val videoFile = File(outDir, "video_${System.currentTimeMillis()}.mp4")
+
+        val recorder = VideoRecorder(
+            sharedContext = eglContext,
+            outputFile = videoFile
+        ) { success, file, durationMs ->
+            serviceScope.launch {
+                if (success && file.exists() && file.length() > 0) {
+                    val ok = signalingClient?.uploadCapture(
+                        type = "video",
+                        file = file,
+                        durationSeconds = (durationMs / 1000L).coerceAtLeast(1L)
+                    ) ?: false
+                    Log.i(TAG, "Video upload ${if (ok) "OK" else "FAILED"} (${file.length()} bytes, ${durationMs}ms)")
+                } else {
+                    Log.w(TAG, "Recording produced no usable file")
+                }
+                file.delete()
+            }
+        }
+
+        activeRecorder = recorder
+        client.addVideoSink(recorder)
     }
 
     private fun stopRecording() {
-        // Stop video recording
         Log.d(TAG, "Stopping recording...")
-        // TODO: Stop video recording
+        val recorder = activeRecorder ?: run {
+            Log.d(TAG, "stopRecording: no active recorder")
+            return
+        }
+        activeRecorder = null
+        val client = webRtcClient
+        recorder.stop()
+        // The recorder finalizes itself on the next frame; remove the sink shortly after
+        // to stop feeding it, then it will close its encoder.
+        serviceScope.launch {
+            delay(500)
+            try {
+                client?.removeVideoSink(recorder)
+            } catch (e: Exception) {
+                Log.w(TAG, "removeVideoSink(recorder) failed", e)
+            }
+        }
+    }
+
+    private fun switchPhoneCamera() {
+        Log.d(TAG, "Switching phone camera (front/back)")
+        val client = webRtcClient
+        if (client == null) {
+            Log.w(TAG, "switchPhoneCamera: WebRTC client not initialized; ignoring")
+            return
+        }
+        client.switchCamera { success, isFront ->
+            Log.i(TAG, "switchCamera result: success=$success isFront=$isFront")
+        }
     }
 
     private fun hasCameraPermission(): Boolean {

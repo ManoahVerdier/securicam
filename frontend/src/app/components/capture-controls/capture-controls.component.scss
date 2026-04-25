@@ -60,6 +60,16 @@
         }
       }
     }
+
+    &.btn-switch {
+      background: #2d2d44;
+      color: #fff;
+      border: 2px solid #4a4a6a;
+
+      &:hover:not(:disabled) {
+        background: #3d3d5c;
+      }
+    }
   }
 
   .status-message {

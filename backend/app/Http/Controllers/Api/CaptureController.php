@@ -7,6 +7,7 @@ use App\Models\Camera;
 use App\Models\Capture;
 use App\Events\CapturePhoto;
 use App\Events\CaptureCreated;
+use App\Events\SwitchCamera;
 use App\Events\VideoRecordingStart;
 use App\Events\VideoRecordingStop;
 use Illuminate\Http\JsonResponse;
@@ -124,6 +125,31 @@ class CaptureController extends Controller
         return response()->json([
             'message' => 'Video recording stopped',
             'camera' => $camera,
+        ]);
+    }
+
+    /**
+     * Trigger a front/back camera switch on the phone.
+     */
+    public function switchCamera(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'camera_id' => ['required', 'exists:cameras,id'],
+        ]);
+
+        $camera = Camera::findOrFail($validated['camera_id']);
+        $this->authorize('update', $camera);
+
+        if (!$camera->isOnline()) {
+            return response()->json([
+                'message' => 'Camera is offline',
+            ], 422);
+        }
+
+        broadcast(new SwitchCamera($camera->id))->toOthers();
+
+        return response()->json([
+            'message' => 'Camera switch triggered',
         ]);
     }
 

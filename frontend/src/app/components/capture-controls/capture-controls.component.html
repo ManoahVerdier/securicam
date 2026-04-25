@@ -24,6 +24,17 @@
     <span class="label" *ngIf="isTogglingRecord">...</span>
   </button>
 
+  <button
+    class="btn btn-switch"
+    (click)="switchPhoneCamera()"
+    [disabled]="!isOnline || isSwitchingCamera"
+    title="Basculer entre caméra avant et arrière du téléphone"
+  >
+    <span class="icon">🔄</span>
+    <span class="label" *ngIf="!isSwitchingCamera">Avant/Arrière</span>
+    <span class="label" *ngIf="isSwitchingCamera">...</span>
+  </button>
+
   <div class="status-message" *ngIf="!isOnline">
     Caméra hors ligne
   </div>

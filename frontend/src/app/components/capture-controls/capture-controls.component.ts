@@ -17,6 +17,7 @@ export class CaptureControlsComponent {
 
   isCapturingPhoto = false;
   isTogglingRecord = false;
+  isSwitchingCamera = false;
 
   constructor(private captureService: CaptureService) {}
 
@@ -62,6 +63,21 @@ export class CaptureControlsComponent {
       error: (err) => {
         this.isTogglingRecord = false;
         this.error.emit(err.error?.message || 'Erreur lors du changement d\'enregistrement');
+      }
+    });
+  }
+
+  switchPhoneCamera(): void {
+    if (!this.isOnline || this.isSwitchingCamera) return;
+
+    this.isSwitchingCamera = true;
+    this.captureService.switchPhoneCamera(this.camera.id).subscribe({
+      next: () => {
+        this.isSwitchingCamera = false;
+      },
+      error: (err) => {
+        this.isSwitchingCamera = false;
+        this.error.emit(err.error?.message || 'Erreur lors du changement de caméra');
       }
     });
   }
