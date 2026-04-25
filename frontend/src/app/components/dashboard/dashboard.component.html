@@ -110,8 +110,21 @@
         </ng-container>
 
         <ng-container *ngIf="viewMode === 'stream'">
-          <button class="stop-stream-btn" (click)="stopStreaming()">⬅ Retour aux infos</button>
-          <app-camera-viewer [camera]="selectedCamera"></app-camera-viewer>
+          <div class="stream-top-bar">
+            <button class="stop-stream-btn" (click)="stopStreaming()">⬅ Retour aux infos</button>
+            <div class="camera-switcher" *ngIf="cameras.length > 1">
+              <span class="switcher-label">Caméra :</span>
+              <button
+                *ngFor="let cam of cameras"
+                class="cam-switch-btn"
+                [class.active]="cam.id === selectedCamera?.id"
+                [disabled]="!isReady(cam)"
+                (click)="switchStreamCamera(cam)"
+                [title]="isReady(cam) ? cam.name : cam.name + ' (hors-ligne)'"
+              >{{ cam.name }}</button>
+            </div>
+          </div>
+          <app-camera-viewer *ngIf="selectedCamera" [camera]="selectedCamera"></app-camera-viewer>
 
           <app-capture-controls
             [camera]="selectedCamera"

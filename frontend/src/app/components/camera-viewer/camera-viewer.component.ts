@@ -1,4 +1,4 @@
-import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, ViewChild, ElementRef, AfterViewInit } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, ViewChild, ElementRef, AfterViewInit, SimpleChanges, OnChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Subscription } from 'rxjs';
 import { Camera } from '../../models';
@@ -11,7 +11,7 @@ import { WebrtcService, WebRtcState } from '../../services';
   templateUrl: './camera-viewer.component.html',
   styleUrl: './camera-viewer.component.scss'
 })
-export class CameraViewerComponent implements OnInit, OnDestroy, AfterViewInit {
+export class CameraViewerComponent implements OnInit, OnChanges, OnDestroy, AfterViewInit {
   @Input({ required: true }) camera!: Camera;
   @Output() connectionStateChange = new EventEmitter<WebRtcState>();
 
@@ -24,6 +24,8 @@ export class CameraViewerComponent implements OnInit, OnDestroy, AfterViewInit {
   errorMessage = '';
 
   private subscriptions: Subscription[] = [];
+  private loadingTimeout: ReturnType<typeof setTimeout> | null = null;
+  private static readonly LOADING_TIMEOUT_MS = 40000;
 
   constructor(private webrtcService: WebrtcService) {}
 
@@ -38,10 +40,12 @@ export class CameraViewerComponent implements OnInit, OnDestroy, AfterViewInit {
           if (state.connectionState === 'connected') {
             this.isLoading = false;
             this.hasError = false;
+            this.clearLoadingTimeout();
           } else if (state.connectionState === 'failed') {
             this.hasError = true;
             this.isLoading = false;
             this.errorMessage = 'Connection failed';
+            this.clearLoadingTimeout();
           }
         }
       })
@@ -52,9 +56,17 @@ export class CameraViewerComponent implements OnInit, OnDestroy, AfterViewInit {
         if (cameraId === this.camera.id && this.videoElement) {
           this.videoElement.nativeElement.srcObject = stream;
           this.isLoading = false;
+          this.clearLoadingTimeout();
         }
       })
     );
+  }
+
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes['camera'] && !changes['camera'].firstChange) {
+      this.disconnect();
+      setTimeout(() => this.connect(), 100);
+    }
   }
 
   ngAfterViewInit(): void {
@@ -62,6 +74,7 @@ export class CameraViewerComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   ngOnDestroy(): void {
+    this.clearLoadingTimeout();
     this.disconnect();
     this.subscriptions.forEach(sub => sub.unsubscribe());
   }
@@ -69,11 +82,13 @@ export class CameraViewerComponent implements OnInit, OnDestroy, AfterViewInit {
   connect(): void {
     this.isLoading = true;
     this.hasError = false;
+    this.startLoadingTimeout();
     this.webrtcService.connectToCamera(this.camera.id).catch((error) => {
       console.error(`[CameraViewer] Failed to connect to camera ${this.camera.id}`, error);
       this.hasError = true;
       this.isLoading = false;
       this.errorMessage = 'Connexion à la caméra impossible';
+      this.clearLoadingTimeout();
     });
 
     // Check if stream is already available
@@ -81,6 +96,25 @@ export class CameraViewerComponent implements OnInit, OnDestroy, AfterViewInit {
     if (existingStream && this.videoElement) {
       this.videoElement.nativeElement.srcObject = existingStream;
       this.isLoading = false;
+      this.clearLoadingTimeout();
+    }
+  }
+
+  private startLoadingTimeout(): void {
+    this.clearLoadingTimeout();
+    this.loadingTimeout = setTimeout(() => {
+      if (this.isLoading) {
+        this.hasError = true;
+        this.isLoading = false;
+        this.errorMessage = 'Délai de connexion dépassé. Vérifiez que la caméra est active.';
+      }
+    }, CameraViewerComponent.LOADING_TIMEOUT_MS);
+  }
+
+  private clearLoadingTimeout(): void {
+    if (this.loadingTimeout !== null) {
+      clearTimeout(this.loadingTimeout);
+      this.loadingTimeout = null;
     }
   }
 

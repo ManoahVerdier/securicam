@@ -86,6 +86,10 @@ class CameraService : LifecycleService() {
     val configuredCameraId: Int
         get() = cameraId
 
+    /** True while the initial signaling connection is being established. */
+    var isConnecting: Boolean = false
+        private set
+
     /** True while a reconnection attempt is in progress. */
     var isReconnecting: Boolean = false
         private set
@@ -130,19 +134,11 @@ class CameraService : LifecycleService() {
                 loadConfiguration(intent)
                 startForegroundService()
                 connectSignalingIfNeeded()
-                serviceScope.launch {
-                    signalingClient?.notifyConnect()
-                }
-                startHeartbeat()
             }
             ACTION_START -> {
                 loadConfiguration(intent)
                 startForegroundService()
                 connectSignalingIfNeeded()
-                serviceScope.launch {
-                    signalingClient?.notifyConnect()
-                }
-                startHeartbeat()
             }
             ACTION_STOP -> {
                 stopHeartbeat()
@@ -232,8 +228,16 @@ class CameraService : LifecycleService() {
 
     private fun connectSignalingIfNeeded() {
         serviceScope.launch {
-            if (!ensureSignalingConnected()) {
-                Log.w(TAG, "Signaling connection is not ready")
+            isConnecting = true
+            try {
+                if (ensureSignalingConnected()) {
+                    signalingClient?.notifyConnect()
+                    startHeartbeat()
+                } else {
+                    Log.w(TAG, "Signaling connection is not ready")
+                }
+            } finally {
+                isConnecting = false
             }
         }
     }

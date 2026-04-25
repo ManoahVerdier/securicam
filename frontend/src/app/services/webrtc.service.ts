@@ -18,9 +18,11 @@ export interface WebRtcState {
 export class WebrtcService implements OnDestroy {
   private static readonly CAMERA_READY_TIMEOUT_MS = 30000;
   private static readonly CAMERA_STATUS_POLL_INTERVAL_MS = 2000;
+  private static readonly MAX_ICE_RESTART_ATTEMPTS = 3;
 
   private peerConnections: Map<number, RTCPeerConnection> = new Map();
   private remoteStreams: Map<number, MediaStream> = new Map();
+  private iceRestartAttempts: Map<number, number> = new Map();
 
   private stateSubject = new Subject<WebRtcState>();
   private streamSubject = new Subject<{ cameraId: number; stream: MediaStream }>();
@@ -98,8 +100,25 @@ export class WebrtcService implements OnDestroy {
       this.emitState(cameraId, pc, this.remoteStreams.has(cameraId));
 
       if (pc.iceConnectionState === 'failed') {
-        console.warn(`[WebRTC] ICE failed for camera ${cameraId}, restarting ICE`);
-        pc.restartIce();
+        const attempts = (this.iceRestartAttempts.get(cameraId) ?? 0) + 1;
+        if (attempts <= WebrtcService.MAX_ICE_RESTART_ATTEMPTS) {
+          console.warn(`[WebRTC] ICE failed for camera ${cameraId}, restarting ICE (attempt ${attempts}/${WebrtcService.MAX_ICE_RESTART_ATTEMPTS})`);
+          this.iceRestartAttempts.set(cameraId, attempts);
+          pc.restartIce();
+        } else {
+          console.error(`[WebRTC] ICE permanently failed for camera ${cameraId} after ${attempts - 1} restart attempts`);
+          pc.close();
+          this.peerConnections.delete(cameraId);
+          this.iceRestartAttempts.delete(cameraId);
+          this.stateSubject.next({
+            cameraId,
+            connectionState: 'failed',
+            iceConnectionState: 'failed',
+            hasRemoteStream: this.remoteStreams.has(cameraId)
+          });
+        }
+      } else if (pc.iceConnectionState === 'connected') {
+        this.iceRestartAttempts.delete(cameraId);
       }
     };
 
@@ -172,6 +191,7 @@ export class WebrtcService implements OnDestroy {
       this.remoteStreams.delete(cameraId);
     }
 
+    this.iceRestartAttempts.delete(cameraId);
     this.signalingService.leaveChannel(cameraId);
   }
 

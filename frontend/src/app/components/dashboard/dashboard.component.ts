@@ -130,6 +130,17 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.viewMode = 'info';
   }
 
+  switchStreamCamera(camera: Camera): void {
+    if (camera.id === this.selectedCamera?.id || !this.isReady(camera)) {
+      return;
+    }
+    this.selectedCamera = null;
+    setTimeout(() => {
+      this.selectCamera(camera);
+      this.viewMode = 'stream';
+    }, 0);
+  }
+
   isReady(camera: Camera): boolean {
     return camera.status !== 'offline';
   }
