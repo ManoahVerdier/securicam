@@ -135,6 +135,7 @@ class CaptureController extends Controller
     {
         $validated = $request->validate([
             'camera_id' => ['required', 'exists:cameras,id'],
+            'lens_id' => ['sometimes', 'nullable', 'string', 'max:64'],
         ]);
 
         $camera = Camera::findOrFail($validated['camera_id']);
@@ -146,7 +147,7 @@ class CaptureController extends Controller
             ], 422);
         }
 
-        broadcast(new SwitchCamera($camera->id))->toOthers();
+        broadcast(new SwitchCamera($camera->id, $validated['lens_id'] ?? null))->toOthers();
 
         return response()->json([
             'message' => 'Camera switch triggered',

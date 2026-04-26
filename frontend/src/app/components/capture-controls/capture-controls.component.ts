@@ -1,6 +1,6 @@
 import { Component, Input, Output, EventEmitter } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { Camera } from '../../models';
+import { Camera, CameraLens } from '../../models';
 import { CaptureService } from '../../services';
 
 @Component({
@@ -18,6 +18,7 @@ export class CaptureControlsComponent {
   isCapturingPhoto = false;
   isTogglingRecord = false;
   isSwitchingCamera = false;
+  switchingToLens: string | null = null;
 
   constructor(private captureService: CaptureService) {}
 
@@ -27,6 +28,18 @@ export class CaptureControlsComponent {
 
   get isOnline(): boolean {
     return this.camera.status !== 'offline';
+  }
+
+  get availableLenses(): CameraLens[] {
+    return this.camera.available_lenses || [];
+  }
+
+  get hasLensChoice(): boolean {
+    return this.availableLenses.length > 1;
+  }
+
+  isActiveLens(lens: CameraLens): boolean {
+    return this.camera.active_lens === lens.id;
   }
 
   capturePhoto(): void {
@@ -67,16 +80,23 @@ export class CaptureControlsComponent {
     });
   }
 
-  switchPhoneCamera(): void {
+  /**
+   * Toggle between front and back when no explicit lens is given.
+   * If a [lensId] is provided (multi-back-camera phone), switch to that lens.
+   */
+  switchPhoneCamera(lensId?: string): void {
     if (!this.isOnline || this.isSwitchingCamera) return;
 
     this.isSwitchingCamera = true;
-    this.captureService.switchPhoneCamera(this.camera.id).subscribe({
+    this.switchingToLens = lensId ?? null;
+    this.captureService.switchPhoneCamera(this.camera.id, lensId).subscribe({
       next: () => {
         this.isSwitchingCamera = false;
+        this.switchingToLens = null;
       },
       error: (err) => {
         this.isSwitchingCamera = false;
+        this.switchingToLens = null;
         this.error.emit(err.error?.message || 'Erreur lors du changement de caméra');
       }
     });

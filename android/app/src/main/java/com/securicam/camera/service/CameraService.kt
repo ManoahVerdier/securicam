@@ -25,6 +25,7 @@ import androidx.lifecycle.LifecycleService
 import com.securicam.camera.R
 import com.securicam.camera.SecuricamApp
 import com.securicam.camera.ui.MainActivity
+import com.securicam.camera.webrtc.LensCatalog
 import com.securicam.camera.webrtc.PhotoCapturer
 import com.securicam.camera.webrtc.VideoRecorder
 import com.securicam.camera.webrtc.WebRtcClient
@@ -114,7 +115,11 @@ class CameraService : LifecycleService() {
             try {
                 disconnectSignaling()
                 if (ensureSignalingConnected()) {
-                    signalingClient?.notifyConnect()
+                    val activeLens = webRtcClient?.activeLensId ?: LensCatalog.defaultLensId(applicationContext)
+                    signalingClient?.notifyConnect(
+                        availableLenses = lensCatalogPayload(),
+                        activeLens = activeLens
+                    )
                     startHeartbeat()
                     Log.i(TAG, "Reconnected successfully")
                 } else {
@@ -164,10 +169,24 @@ class CameraService : LifecycleService() {
         heartbeatJob = serviceScope.launch {
             while (isActive) {
                 delay(HEARTBEAT_INTERVAL_MS)
-                signalingClient?.notifyHeartbeat()
+                val activeLens = webRtcClient?.activeLensId ?: LensCatalog.defaultLensId(applicationContext)
+                signalingClient?.notifyHeartbeat(
+                    availableLenses = lensCatalogPayload(),
+                    activeLens = activeLens
+                )
             }
         }
     }
+
+    private fun lensCatalogPayload(): List<Map<String, String>> =
+        try {
+            LensCatalog.enumerate(applicationContext).map {
+                mapOf("id" to it.id, "facing" to it.facing, "label" to it.label)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to enumerate lenses", e)
+            emptyList()
+        }
 
     private fun stopHeartbeat() {
         heartbeatJob?.cancel()
@@ -236,7 +255,11 @@ class CameraService : LifecycleService() {
             isConnecting = true
             try {
                 if (ensureSignalingConnected()) {
-                    signalingClient?.notifyConnect()
+                    val activeLens = webRtcClient?.activeLensId ?: LensCatalog.defaultLensId(applicationContext)
+                    signalingClient?.notifyConnect(
+                        availableLenses = lensCatalogPayload(),
+                        activeLens = activeLens
+                    )
                     startHeartbeat()
                 } else {
                     Log.w(TAG, "Signaling connection is not ready")
@@ -282,8 +305,8 @@ class CameraService : LifecycleService() {
                 onStopRecording = {
                     stopRecording()
                 },
-                onSwitchCamera = {
-                    switchPhoneCamera()
+                onSwitchCamera = { lensId ->
+                    switchPhoneCamera(lensId)
                 },
                 onError = { error ->
                     Log.e(TAG, "Signaling error: $error")
@@ -550,15 +573,25 @@ class CameraService : LifecycleService() {
         }
     }
 
-    private fun switchPhoneCamera() {
-        Log.d(TAG, "Switching phone camera (front/back)")
+    private fun switchPhoneCamera(lensId: String? = null) {
+        Log.d(TAG, "Switching phone camera (lensId=$lensId)")
         val client = webRtcClient
         if (client == null) {
             Log.w(TAG, "switchPhoneCamera: WebRTC client not initialized; ignoring")
             return
         }
-        client.switchCamera { success, isFront ->
-            Log.i(TAG, "switchCamera result: success=$success isFront=$isFront")
+        client.switchCameraTo(lensId) { success, newLensId ->
+            Log.i(TAG, "switchCamera result: success=$success lensId=$newLensId")
+            // Push the new active lens to the backend so the web UI reflects it.
+            serviceScope.launch {
+                try {
+                    signalingClient?.notifyHeartbeat(
+                        availableLenses = lensCatalogPayload(),
+                        activeLens = newLensId
+                    )
+                } catch (_: Exception) {
+                }
+            }
         }
     }
 

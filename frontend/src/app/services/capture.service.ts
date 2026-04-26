@@ -63,8 +63,11 @@ export class CaptureService {
     return this.http.post<{ message: string; camera: any }>(`${this.apiUrl}/captures/video/stop`, data);
   }
 
-  switchPhoneCamera(cameraId: number): Observable<{ message: string }> {
-    const data: TriggerCaptureRequest = { camera_id: cameraId };
+  switchPhoneCamera(cameraId: number, lensId?: string): Observable<{ message: string }> {
+    const data: TriggerCaptureRequest & { lens_id?: string } = { camera_id: cameraId };
+    if (lensId) {
+      data.lens_id = lensId;
+    }
     return this.http.post<{ message: string }>(`${this.apiUrl}/captures/switch-camera`, data);
   }
 }

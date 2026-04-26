@@ -24,7 +24,9 @@
     <span class="label" *ngIf="isTogglingRecord">...</span>
   </button>
 
+  <!-- Simple front/back toggle when only the two facings are available. -->
   <button
+    *ngIf="!hasLensChoice"
     class="btn btn-switch"
     (click)="switchPhoneCamera()"
     [disabled]="!isOnline || isSwitchingCamera"
@@ -34,6 +36,25 @@
     <span class="label" *ngIf="!isSwitchingCamera">Avant/Arrière</span>
     <span class="label" *ngIf="isSwitchingCamera">...</span>
   </button>
+
+  <!-- Multi-lens picker (e.g. wide / ultrawide / telephoto on the back). -->
+  <div class="lens-picker" *ngIf="hasLensChoice">
+    <span class="lens-picker-label">Objectif :</span>
+    <button
+      *ngFor="let lens of availableLenses"
+      class="btn btn-lens"
+      [class.active]="isActiveLens(lens)"
+      [disabled]="!isOnline || isSwitchingCamera"
+      (click)="switchPhoneCamera(lens.id)"
+      [title]="lens.label"
+    >
+      <span class="icon">{{ lens.facing === 'front' ? '🤳' : lens.facing === 'back' ? '📷' : '🎥' }}</span>
+      <span class="label">
+        <ng-container *ngIf="switchingToLens !== lens.id">{{ lens.label }}</ng-container>
+        <ng-container *ngIf="switchingToLens === lens.id">...</ng-container>
+      </span>
+    </button>
+  </div>
 
   <div class="status-message" *ngIf="!isOnline">
     Caméra hors ligne

@@ -50,7 +50,7 @@ class SignalingClient(
     private var onStopStreamingCallback: (() -> Unit)? = null
     private var onStartRecordingCallback: (() -> Unit)? = null
     private var onStopRecordingCallback: (() -> Unit)? = null
-    private var onSwitchCameraCallback: (() -> Unit)? = null
+    private var onSwitchCameraCallback: ((String?) -> Unit)? = null
     private var connectionReadyDeferred: CompletableDeferred<Boolean>? = null
     private var socketId: String? = null
 
@@ -63,7 +63,7 @@ class SignalingClient(
         onStopStreaming: () -> Unit,
         onStartRecording: () -> Unit,
         onStopRecording: () -> Unit,
-        onSwitchCamera: () -> Unit = {},
+        onSwitchCamera: (lensId: String?) -> Unit = { _ -> },
         timeoutMs: Long = 10_000L,
         onError: (String) -> Unit = {}
     ): Boolean {
@@ -296,7 +296,10 @@ class SignalingClient(
                     onStopRecordingCallback?.invoke()
                 }
                 "camera.switch" -> {
-                    onSwitchCameraCallback?.invoke()
+                    val lensId = data?.get("lens_id")
+                        ?.takeIf { !it.isJsonNull && it.isJsonPrimitive }
+                        ?.asString
+                    onSwitchCameraCallback?.invoke(lensId)
                 }
             }
         } catch (e: Exception) {
@@ -361,20 +364,42 @@ class SignalingClient(
         return@withContext makeRequest(url, body, "PATCH")
     }
 
-    suspend fun notifyConnect(): Boolean = withContext(Dispatchers.IO) {
+    suspend fun notifyConnect(
+        availableLenses: List<Map<String, String>> = emptyList(),
+        activeLens: String? = null
+    ): Boolean = withContext(Dispatchers.IO) {
         val url = buildApiUrl("/cameras/$cameraId/connect") ?: run {
             Log.e(TAG, "Failed to notify connect: invalid server URL '$serverUrl'")
             return@withContext false
         }
-        return@withContext makeRequest(url, JsonObject())
+        val body = JsonObject().apply {
+            if (availableLenses.isNotEmpty()) {
+                add("available_lenses", gson.toJsonTree(availableLenses))
+            }
+            if (!activeLens.isNullOrBlank()) {
+                addProperty("active_lens", activeLens)
+            }
+        }
+        return@withContext makeRequest(url, body)
     }
 
-    suspend fun notifyHeartbeat(): Boolean = withContext(Dispatchers.IO) {
+    suspend fun notifyHeartbeat(
+        availableLenses: List<Map<String, String>> = emptyList(),
+        activeLens: String? = null
+    ): Boolean = withContext(Dispatchers.IO) {
         val url = buildApiUrl("/cameras/$cameraId/heartbeat") ?: run {
             Log.e(TAG, "Failed to send heartbeat: invalid server URL '$serverUrl'")
             return@withContext false
         }
-        return@withContext makeRequest(url, JsonObject())
+        val body = JsonObject().apply {
+            if (availableLenses.isNotEmpty()) {
+                add("available_lenses", gson.toJsonTree(availableLenses))
+            }
+            if (!activeLens.isNullOrBlank()) {
+                addProperty("active_lens", activeLens)
+            }
+        }
+        return@withContext makeRequest(url, body)
     }
 
     suspend fun notifyDisconnect(): Boolean = withContext(Dispatchers.IO) {

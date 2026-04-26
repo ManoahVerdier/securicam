@@ -139,12 +139,27 @@ class CameraController extends Controller
     {
         $this->authorize('update', $camera);
 
-        $camera->update([
+        $payload = $request->validate([
+            'available_lenses' => ['sometimes', 'array'],
+            'available_lenses.*.id' => ['required_with:available_lenses', 'string', 'max:64'],
+            'available_lenses.*.facing' => ['required_with:available_lenses', 'string', 'in:front,back,external'],
+            'available_lenses.*.label' => ['required_with:available_lenses', 'string', 'max:128'],
+            'active_lens' => ['sometimes', 'nullable', 'string', 'max:64'],
+        ]);
+
+        $update = [
             'status' => Camera::STATUS_ONLINE,
             'last_seen_at' => now(),
             'connected_at' => now(),
             'last_ip' => $request->ip(),
-        ]);
+        ];
+        if (array_key_exists('available_lenses', $payload)) {
+            $update['available_lenses'] = $payload['available_lenses'];
+        }
+        if (array_key_exists('active_lens', $payload)) {
+            $update['active_lens'] = $payload['active_lens'];
+        }
+        $camera->update($update);
 
         return response()->json([
             'message' => 'Camera connected',
@@ -159,10 +174,25 @@ class CameraController extends Controller
     {
         $this->authorize('update', $camera);
 
-        $camera->update([
+        $payload = $request->validate([
+            'available_lenses' => ['sometimes', 'array'],
+            'available_lenses.*.id' => ['required_with:available_lenses', 'string', 'max:64'],
+            'available_lenses.*.facing' => ['required_with:available_lenses', 'string', 'in:front,back,external'],
+            'available_lenses.*.label' => ['required_with:available_lenses', 'string', 'max:128'],
+            'active_lens' => ['sometimes', 'nullable', 'string', 'max:64'],
+        ]);
+
+        $update = [
             'last_seen_at' => now(),
             'last_ip' => $request->ip(),
-        ]);
+        ];
+        if (array_key_exists('available_lenses', $payload)) {
+            $update['available_lenses'] = $payload['available_lenses'];
+        }
+        if (array_key_exists('active_lens', $payload)) {
+            $update['active_lens'] = $payload['active_lens'];
+        }
+        $camera->update($update);
 
         return response()->json([
             'camera' => $camera->fresh(),

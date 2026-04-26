@@ -70,6 +70,36 @@
         background: #3d3d5c;
       }
     }
+
+    &.btn-lens {
+      background: #2d2d44;
+      color: #fff;
+      border: 2px solid #4a4a6a;
+      padding: 8px 14px;
+      font-size: 13px;
+
+      &:hover:not(:disabled) {
+        background: #3d3d5c;
+      }
+
+      &.active {
+        background: #4a90d9;
+        border-color: #4a90d9;
+      }
+    }
+  }
+
+  .lens-picker {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+
+    .lens-picker-label {
+      color: #aaa;
+      font-size: 13px;
+      font-weight: 500;
+    }
   }
 
   .status-message {

@@ -13,7 +13,8 @@ class SwitchCamera implements ShouldBroadcastNow
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
     public function __construct(
-        public int $cameraId
+        public int $cameraId,
+        public ?string $lensId = null
     ) {}
 
     public function broadcastOn(): array
@@ -27,6 +28,7 @@ class SwitchCamera implements ShouldBroadcastNow
     {
         return [
             'camera_id' => $this->cameraId,
+            'lens_id' => $this->lensId,
             'action' => 'switch_camera',
             'timestamp' => now()->toIso8601String(),
         ];

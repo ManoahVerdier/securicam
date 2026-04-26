@@ -24,6 +24,8 @@ class Camera extends Model
         'last_seen_at',
         'last_ip',
         'connected_at',
+        'available_lenses',
+        'active_lens',
     ];
 
     /**
@@ -36,6 +38,7 @@ class Camera extends Model
         return [
             'last_seen_at' => 'datetime',
             'connected_at' => 'datetime',
+            'available_lenses' => 'array',
         ];
     }
 

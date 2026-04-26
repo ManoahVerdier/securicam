@@ -16,6 +16,16 @@ RUN apt-get update && apt-get install -y \
 # Install Redis extension
 RUN pecl install redis && docker-php-ext-enable redis
 
+# Bump PHP upload limits so video captures (typically 5–50 MB MP4 from the
+# Android recorder) are not rejected with HTTP 422 "The file failed to upload".
+# The Laravel validator already caps at 100 MB; PHP must allow at least that.
+RUN { \
+        echo "upload_max_filesize=200M"; \
+        echo "post_max_size=200M"; \
+        echo "memory_limit=256M"; \
+        echo "max_execution_time=120"; \
+    } > /usr/local/etc/php/conf.d/securicam-uploads.ini
+
 # Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 

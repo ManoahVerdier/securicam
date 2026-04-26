@@ -70,6 +70,11 @@ class WebRtcClient(
     var isFrontCameraActive: Boolean = false
         private set
 
+    /** Camera2 deviceName of the lens currently used (matches LensCatalog.Lens.id). */
+    @Volatile
+    var activeLensId: String? = null
+        private set
+
     /** Last frame dimensions reported by the capture pipeline (for recorder hints). */
     @Volatile
     var lastFrameWidth: Int = 1920
@@ -173,6 +178,7 @@ class WebRtcClient(
         for (deviceName in enumerator.deviceNames) {
             if (enumerator.isBackFacing(deviceName)) {
                 isFrontCameraActive = false
+                activeLensId = deviceName
                 return enumerator.createCapturer(deviceName, null)
             }
         }
@@ -181,11 +187,52 @@ class WebRtcClient(
         for (deviceName in enumerator.deviceNames) {
             if (enumerator.isFrontFacing(deviceName)) {
                 isFrontCameraActive = true
+                activeLensId = deviceName
                 return enumerator.createCapturer(deviceName, null)
             }
         }
 
         return null
+    }
+
+    /**
+     * Switch to a specific physical lens (by Camera2 deviceName). Use this for
+     * multi-back-camera phones (wide / ultrawide / telephoto) so the user can
+     * pick which sensor streams from the web UI. Falls back to a regular
+     * front/back toggle if [lensId] is null.
+     */
+    fun switchCameraTo(lensId: String?, onResult: (success: Boolean, lensId: String?) -> Unit = { _, _ -> }) {
+        val capturer = videoCapturer
+        if (capturer == null) {
+            onResult(false, activeLensId)
+            return
+        }
+        if (lensId.isNullOrBlank()) {
+            switchCamera { success, _ -> onResult(success, activeLensId) }
+            return
+        }
+        try {
+            val enumerator = Camera2Enumerator(context)
+            val isFront = try { enumerator.isFrontFacing(lensId) } catch (_: Throwable) { false }
+            capturer.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
+                override fun onCameraSwitchDone(isFrontFacing: Boolean) {
+                    isFrontCameraActive = isFrontFacing
+                    activeLensId = lensId
+                    Log.i(TAG, "Camera switched to lens $lensId (isFront=$isFrontFacing)")
+                    onResult(true, lensId)
+                }
+
+                override fun onCameraSwitchError(errorDescription: String?) {
+                    Log.e(TAG, "Camera switch to $lensId failed: $errorDescription")
+                    onResult(false, activeLensId)
+                }
+            }, lensId)
+            // Hint: also pre-update isFront so consumers (preview, recorder) get a quicker UI update.
+            isFrontCameraActive = isFront
+        } catch (e: Exception) {
+            Log.e(TAG, "switchCameraTo($lensId) threw", e)
+            onResult(false, activeLensId)
+        }
     }
 
     /**
@@ -203,7 +250,15 @@ class WebRtcClient(
             capturer.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
                 override fun onCameraSwitchDone(isFrontFacing: Boolean) {
                     isFrontCameraActive = isFrontFacing
-                    Log.i(TAG, "Camera switched: isFront=$isFrontFacing")
+                    // Refresh active lens id by enumerating; libwebrtc switches to the
+                    // first lens of the opposite facing.
+                    activeLensId = try {
+                        val enumerator = Camera2Enumerator(context)
+                        enumerator.deviceNames.firstOrNull { name ->
+                            if (isFrontFacing) enumerator.isFrontFacing(name) else enumerator.isBackFacing(name)
+                        } ?: activeLensId
+                    } catch (_: Throwable) { activeLensId }
+                    Log.i(TAG, "Camera switched: isFront=$isFrontFacing lensId=$activeLensId")
                     onResult(true, isFrontFacing)
                 }
 

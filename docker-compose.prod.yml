@@ -20,7 +20,11 @@ services:
     container_name: securicam-backend
     restart: unless-stopped
     working_dir: /var/www
-    command: sh -c "chown www-data:www-data /var/www/database/database.sqlite 2>/dev/null; chmod 664 /var/www/database/database.sqlite 2>/dev/null; php artisan migrate --force && php artisan config:cache && php artisan route:cache && php artisan event:cache && php-fpm"
+    # Fix permissions on bind-mounted storage/database so php-fpm (www-data)
+    # can write capture uploads and the SQLite DB. Then run migrations and
+    # caches before starting php-fpm. `php artisan storage:link` is required
+    # for /storage/* URLs to resolve to storage/app/public/*.
+    command: sh -c "chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache /var/www/database 2>/dev/null; chmod -R u+rwX,g+rwX /var/www/storage /var/www/bootstrap/cache 2>/dev/null; chmod 664 /var/www/database/database.sqlite 2>/dev/null; php artisan storage:link --force 2>/dev/null || true; php artisan migrate --force && php artisan config:cache && php artisan route:cache && php artisan event:cache && php-fpm"
     volumes:
       - ./backend:/var/www
       - sqlite_data:/var/www/database
