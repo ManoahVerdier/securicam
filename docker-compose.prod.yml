@@ -24,7 +24,7 @@ services:
     # can write capture uploads and the SQLite DB. Then run migrations and
     # caches before starting php-fpm. `php artisan storage:link` is required
     # for /storage/* URLs to resolve to storage/app/public/*.
-    command: sh -c "chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache /var/www/database 2>/dev/null; chmod -R u+rwX,g+rwX /var/www/storage /var/www/bootstrap/cache 2>/dev/null; chmod 664 /var/www/database/database.sqlite 2>/dev/null; php artisan storage:link --force 2>/dev/null || true; php artisan migrate --force && php artisan config:cache && php artisan route:cache && php artisan event:cache && php-fpm"
+    command: sh -c "mkdir -p /var/www/storage/app/public /var/www/storage/app/public/captures; chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache /var/www/database 2>/dev/null; chmod -R u+rwX,g+rwX /var/www/storage /var/www/bootstrap/cache 2>/dev/null; chmod 664 /var/www/database/database.sqlite 2>/dev/null; php artisan storage:link --force 2>/dev/null || true; php artisan migrate --force && php artisan config:cache && php artisan route:cache && php artisan event:cache && php-fpm"
     volumes:
       - ./backend:/var/www
       - sqlite_data:/var/www/database
@@ -49,6 +49,8 @@ services:
         condition: service_started
     networks:
       - securicam-network
+    mem_limit: 512m
+    memswap_limit: 768m
 
   reverb:
     build:
@@ -79,6 +81,8 @@ services:
         condition: service_started
     networks:
       - securicam-network
+    mem_limit: 256m
+    memswap_limit: 384m
 
   redis:
     image: redis:alpine
@@ -86,6 +90,8 @@ services:
     restart: unless-stopped
     networks:
       - securicam-network
+    mem_limit: 128m
+    memswap_limit: 192m
 
   # ----------------------------------------------------------------------
   # coturn = STUN + TURN. Host networking so it advertises the real public
@@ -102,6 +108,8 @@ services:
       -c /etc/coturn/turnserver.conf
       --external-ip=${PUBLIC_IP}
       --user=${TURN_USER}:${TURN_PASSWORD}
+    mem_limit: 256m
+    memswap_limit: 384m
 
 networks:
   securicam-network:
