@@ -1,0 +1,1021 @@
+openapi: 3.1.0
+info:
+  title: Securicam API
+  version: 1.0.0
+  description: >
+    REST API for the Securicam platform. Handles authentication, camera
+    registration, WebRTC signalling (offer/answer/ICE relay via Laravel Reverb),
+    and capture management (photo triggers, video recording, file uploads).
+
+    **Authentication**: All routes except `/health`, `/register`, and `/login`
+    require a Bearer token issued by `/login` or `/register`.
+
+servers:
+  - url: http://localhost:8000/api
+    description: LAN / development
+  - url: https://{host}/api
+    description: Production VPS
+    variables:
+      host:
+        default: securicam.example.com
+
+security:
+  - bearerAuth: []
+
+# =============================================================================
+# Paths
+# =============================================================================
+paths:
+
+  # ---------------------------------------------------------------------------
+  # Health
+  # ---------------------------------------------------------------------------
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      description: Returns 200 with a timestamp. No authentication required. Used by monitoring and deploy scripts.
+      security: []
+      responses:
+        '200':
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  # ---------------------------------------------------------------------------
+  # Auth
+  # ---------------------------------------------------------------------------
+  /register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      description: Rate-limited to 10 requests/minute per IP.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password, password_confirmation]
+              properties:
+                name:
+                  type: string
+                  maxLength: 255
+                email:
+                  type: string
+                  format: email
+                  maxLength: 255
+                password:
+                  type: string
+                  minLength: 8
+                password_confirmation:
+                  type: string
+                  minLength: 8
+      responses:
+        '201':
+          description: User registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /login:
+    post:
+      tags: [Auth]
+      summary: Log in and obtain a bearer token
+      description: Rate-limited to 10 requests/minute per IP.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                device_name:
+                  type: string
+                  maxLength: 255
+                  description: Human-readable label for the token (defaults to User-Agent).
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /user:
+    get:
+      tags: [Auth]
+      summary: Get the authenticated user
+      responses:
+        '200':
+          description: Authenticated user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+
+  /logout:
+    post:
+      tags: [Auth]
+      summary: Revoke the current token
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOk'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+
+  /revoke-tokens:
+    post:
+      tags: [Auth]
+      summary: Revoke all tokens for the authenticated user
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOk'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+
+  # ---------------------------------------------------------------------------
+  # Cameras
+  # ---------------------------------------------------------------------------
+  /cameras:
+    get:
+      tags: [Cameras]
+      summary: List cameras owned by the authenticated user
+      responses:
+        '200':
+          description: Camera list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cameras:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Camera'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+
+    post:
+      tags: [Cameras]
+      summary: Register a new camera
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, device_id]
+              properties:
+                name:
+                  type: string
+                  maxLength: 255
+                device_id:
+                  type: string
+                  maxLength: 255
+                  description: Unique hardware identifier (e.g. Android device UUID).
+      responses:
+        '201':
+          description: Camera registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  camera:
+                    $ref: '#/components/schemas/Camera'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /cameras/init-status:
+    post:
+      tags: [Cameras]
+      summary: Set camera status by device_id on app boot
+      description: Called by the Android app on startup to synchronise status without needing the camera's database ID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_id, status]
+              properties:
+                device_id:
+                  type: string
+                  maxLength: 255
+                status:
+                  $ref: '#/components/schemas/CameraStatus'
+      responses:
+        '200':
+          description: Status initialised
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  camera:
+                    $ref: '#/components/schemas/Camera'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /cameras/{camera}:
+    parameters:
+      - $ref: '#/components/parameters/CameraId'
+
+    get:
+      tags: [Cameras]
+      summary: Get a camera
+      responses:
+        '200':
+          description: Camera detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  camera:
+                    $ref: '#/components/schemas/Camera'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [Cameras]
+      summary: Update a camera's name
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  maxLength: 255
+      responses:
+        '200':
+          description: Camera updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  camera:
+                    $ref: '#/components/schemas/Camera'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    delete:
+      tags: [Cameras]
+      summary: Delete a camera and all its captures
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOk'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /cameras/{camera}/status:
+    patch:
+      tags: [Cameras]
+      summary: Update camera status (called by Android app)
+      parameters:
+        - $ref: '#/components/parameters/CameraId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  $ref: '#/components/schemas/CameraStatus'
+      responses:
+        '200':
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  camera:
+                    $ref: '#/components/schemas/Camera'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /cameras/{camera}/connect:
+    post:
+      tags: [Cameras]
+      summary: Mark camera as connected and report available lenses
+      description: Called by the Android app when it starts and establishes signalling. Sets status to `online` and records `connected_at`.
+      parameters:
+        - $ref: '#/components/parameters/CameraId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                available_lenses:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Lens'
+                active_lens:
+                  type: string
+                  nullable: true
+                  maxLength: 64
+      responses:
+        '200':
+          description: Camera connected
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  camera:
+                    $ref: '#/components/schemas/Camera'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /cameras/{camera}/heartbeat:
+    post:
+      tags: [Cameras]
+      summary: Refresh last_seen_at (keepalive from Android app)
+      description: Called every 30 seconds by the Android app. Updates `last_seen_at` and `last_ip` without resetting `connected_at`.
+      parameters:
+        - $ref: '#/components/parameters/CameraId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                available_lenses:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Lens'
+                active_lens:
+                  type: string
+                  nullable: true
+                  maxLength: 64
+      responses:
+        '200':
+          description: Heartbeat recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  camera:
+                    $ref: '#/components/schemas/Camera'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /cameras/{camera}/disconnect:
+    post:
+      tags: [Cameras]
+      summary: Mark camera as disconnected (clean Android shutdown)
+      parameters:
+        - $ref: '#/components/parameters/CameraId'
+      responses:
+        '200':
+          description: Camera disconnected
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  camera:
+                    $ref: '#/components/schemas/Camera'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ---------------------------------------------------------------------------
+  # WebRTC signalling
+  # ---------------------------------------------------------------------------
+  /webrtc/start:
+    post:
+      tags: [WebRTC]
+      summary: Request camera to start streaming (viewer → camera via Reverb)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [camera_id]
+              properties:
+                camera_id:
+                  type: integer
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOk'
+        '422':
+          description: Camera is offline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+
+  /webrtc/offer:
+    post:
+      tags: [WebRTC]
+      summary: Relay SDP offer (camera → viewer via Reverb)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebRtcSdp'
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOk'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /webrtc/answer:
+    post:
+      tags: [WebRTC]
+      summary: Relay SDP answer (viewer → camera via Reverb)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebRtcSdp'
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOk'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /webrtc/ice-candidate:
+    post:
+      tags: [WebRTC]
+      summary: Relay ICE candidate between peers (via Reverb)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [camera_id, candidate]
+              properties:
+                camera_id:
+                  type: integer
+                candidate:
+                  $ref: '#/components/schemas/IceCandidate'
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOk'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  # ---------------------------------------------------------------------------
+  # Captures — triggers (viewer → camera via Reverb)
+  # ---------------------------------------------------------------------------
+  /captures/photo:
+    post:
+      tags: [Captures]
+      summary: Trigger a photo capture on the camera
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [camera_id]
+              properties:
+                camera_id:
+                  type: integer
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOk'
+        '422':
+          description: Camera is offline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+
+  /captures/video/start:
+    post:
+      tags: [Captures]
+      summary: Start video recording on the camera
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [camera_id]
+              properties:
+                camera_id:
+                  type: integer
+      responses:
+        '200':
+          description: Recording started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  camera:
+                    $ref: '#/components/schemas/Camera'
+        '422':
+          description: Camera offline or already recording
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+
+  /captures/video/stop:
+    post:
+      tags: [Captures]
+      summary: Stop video recording on the camera
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [camera_id]
+              properties:
+                camera_id:
+                  type: integer
+      responses:
+        '200':
+          description: Recording stopped
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  camera:
+                    $ref: '#/components/schemas/Camera'
+        '422':
+          description: Camera not recording
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+
+  /captures/switch-camera:
+    post:
+      tags: [Captures]
+      summary: Switch the active lens on the phone (front ↔ back or specific lens)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [camera_id]
+              properties:
+                camera_id:
+                  type: integer
+                lens_id:
+                  type: string
+                  nullable: true
+                  maxLength: 64
+                  description: Camera2 device name. Omit or null to toggle front/back.
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOk'
+        '422':
+          description: Camera is offline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+
+  # ---------------------------------------------------------------------------
+  # Captures — upload (camera → backend)
+  # ---------------------------------------------------------------------------
+  /captures/upload:
+    post:
+      tags: [Captures]
+      summary: Upload a captured photo or video from the Android app
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [camera_id, type, file]
+              properties:
+                camera_id:
+                  type: integer
+                type:
+                  type: string
+                  enum: [photo, video]
+                file:
+                  type: string
+                  format: binary
+                  description: Max 100 MB.
+                thumbnail:
+                  type: string
+                  format: binary
+                  description: Optional JPEG thumbnail, max 1 MB.
+                duration:
+                  type: integer
+                  description: Duration in seconds (videos only).
+                captured_at:
+                  type: string
+                  format: date-time
+      responses:
+        '201':
+          description: Capture stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  capture:
+                    $ref: '#/components/schemas/Capture'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  # ---------------------------------------------------------------------------
+  # Captures — read / delete (viewer)
+  # ---------------------------------------------------------------------------
+  /cameras/{camera}/captures:
+    get:
+      tags: [Captures]
+      summary: List captures for a camera (paginated)
+      parameters:
+        - $ref: '#/components/parameters/CameraId'
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [photo, video]
+          description: Filter by capture type.
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Paginated capture list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedCaptures'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /cameras/{camera}/captures/{capture}:
+    parameters:
+      - $ref: '#/components/parameters/CameraId'
+      - name: capture
+        in: path
+        required: true
+        schema:
+          type: integer
+
+    get:
+      tags: [Captures]
+      summary: Get a single capture
+      responses:
+        '200':
+          description: Capture detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  capture:
+                    $ref: '#/components/schemas/Capture'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Captures]
+      summary: Delete a capture and its stored files
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageOk'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+# =============================================================================
+# Components
+# =============================================================================
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Sanctum personal access token
+
+  # ---------------------------------------------------------------------------
+  # Parameters
+  # ---------------------------------------------------------------------------
+  parameters:
+    CameraId:
+      name: camera
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Camera database ID.
+
+  # ---------------------------------------------------------------------------
+  # Schemas
+  # ---------------------------------------------------------------------------
+  schemas:
+
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CameraStatus:
+      type: string
+      enum: [offline, online, streaming, recording]
+
+    Lens:
+      type: object
+      required: [id, facing, label]
+      properties:
+        id:
+          type: string
+          maxLength: 64
+          description: Camera2 device name (e.g. "0", "1").
+        facing:
+          type: string
+          enum: [front, back, external]
+        label:
+          type: string
+          maxLength: 128
+          description: Human-readable name shown in the web UI.
+
+    Camera:
+      type: object
+      properties:
+        id:
+          type: integer
+        user_id:
+          type: integer
+        name:
+          type: string
+        device_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/CameraStatus'
+        last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_ip:
+          type: string
+          nullable: true
+        connected_at:
+          type: string
+          format: date-time
+          nullable: true
+        available_lenses:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/Lens'
+        active_lens:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Capture:
+      type: object
+      properties:
+        id:
+          type: integer
+        camera_id:
+          type: integer
+        type:
+          type: string
+          enum: [photo, video]
+        file_path:
+          type: string
+        thumbnail_path:
+          type: string
+          nullable: true
+        duration:
+          type: integer
+          nullable: true
+          description: Duration in seconds (videos only).
+        file_size:
+          type: integer
+          nullable: true
+          description: File size in bytes.
+        captured_at:
+          type: string
+          format: date-time
+        file_url:
+          type: string
+          nullable: true
+          description: Public URL to the stored file (accessor).
+        thumbnail_url:
+          type: string
+          nullable: true
+          description: Public URL to the thumbnail (accessor).
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    WebRtcSdp:
+      type: object
+      required: [camera_id, sdp, type]
+      properties:
+        camera_id:
+          type: integer
+        sdp:
+          type: string
+          description: SDP body (RFC 4566). CRLF line terminators are preserved.
+        type:
+          type: string
+          enum: [offer, answer]
+
+    IceCandidate:
+      type: object
+      required: [candidate]
+      properties:
+        candidate:
+          type: string
+          description: ICE candidate string (e.g. "candidate:...").
+        sdpMid:
+          type: string
+          nullable: true
+        sdpMLineIndex:
+          type: integer
+          nullable: true
+
+    AuthResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        user:
+          $ref: '#/components/schemas/User'
+        token:
+          type: string
+          description: Sanctum personal access token. Include as `Authorization: Bearer <token>`.
+
+    ErrorMessage:
+      type: object
+      properties:
+        message:
+          type: string
+
+    PaginatedCaptures:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Capture'
+        current_page:
+          type: integer
+        last_page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+        from:
+          type: integer
+          nullable: true
+        to:
+          type: integer
+          nullable: true
+
+  # ---------------------------------------------------------------------------
+  # Responses
+  # ---------------------------------------------------------------------------
+  responses:
+
+    MessageOk:
+      description: Operation succeeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorMessage'
+
+    ValidationError:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+              errors:
+                type: object
+                additionalProperties:
+                  type: array
+                  items:
+                    type: string
+
+    Unauthenticated:
+      description: Missing or invalid bearer token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorMessage'
+
+    Forbidden:
+      description: Authenticated user does not own this resource
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorMessage'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorMessage'
