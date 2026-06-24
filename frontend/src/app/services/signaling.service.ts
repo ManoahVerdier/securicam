@@ -18,6 +18,7 @@ export class SignalingService implements OnDestroy {
   private iceCandidateSubject = new Subject<WebRtcIceCandidate>();
   private connectionStatusSubject = new Subject<boolean>();
   private captureCreatedSubject = new Subject<{ cameraId: number; capture: Capture }>();
+  private cameraOfflineSubject = new Subject<{ cameraId: number }>();
 
   readonly offers$: Observable<WebRtcOffer> = this.offerSubject.asObservable();
   readonly answers$: Observable<WebRtcAnswer> = this.answerSubject.asObservable();
@@ -26,6 +27,9 @@ export class SignalingService implements OnDestroy {
   /** Stream of newly uploaded captures, broadcast by the backend on `camera.{id}`. */
   readonly captureCreated$: Observable<{ cameraId: number; capture: Capture }> =
     this.captureCreatedSubject.asObservable();
+  /** Fires when the scheduler marks a camera offline via `camera.offline` broadcast. */
+  readonly cameraOffline$: Observable<{ cameraId: number }> =
+    this.cameraOfflineSubject.asObservable();
 
   constructor(private authService: AuthService) {}
 
@@ -144,6 +148,11 @@ export class SignalingService implements OnDestroy {
       }
     });
 
+    channel.listen('.camera.offline', (data: { camera_id: number }) => {
+      console.warn(`[Signaling] Camera ${data.camera_id} went offline`);
+      this.cameraOfflineSubject.next({ cameraId: data.camera_id });
+    });
+
     this.channels.set(cameraId, channel);
   }
 
@@ -162,5 +171,6 @@ export class SignalingService implements OnDestroy {
     this.iceCandidateSubject.complete();
     this.connectionStatusSubject.complete();
     this.captureCreatedSubject.complete();
+    this.cameraOfflineSubject.complete();
   }
 }

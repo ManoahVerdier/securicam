@@ -1,6 +1,7 @@
 import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
+import { Subscription } from 'rxjs';
 import { Camera } from '../../models';
 import { AuthService, CameraService, SignalingService } from '../../services';
 import { CameraViewerComponent } from '../camera-viewer/camera-viewer.component';
@@ -28,6 +29,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   error = '';
   private pollingHandle: ReturnType<typeof setInterval> | null = null;
   private joinedChannelCameraId: number | null = null;
+  private offlineSubscription: Subscription | null = null;
 
   constructor(
     private authService: AuthService,
@@ -40,6 +42,16 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.loadCameras();
     this.signalingService.connect();
     this.pollingHandle = setInterval(() => this.loadCameras(), 5000);
+
+    this.offlineSubscription = this.signalingService.cameraOffline$.subscribe(({ cameraId }) => {
+      const idx = this.cameras.findIndex(c => c.id === cameraId);
+      if (idx !== -1) {
+        this.cameras[idx] = { ...this.cameras[idx], status: 'offline', connected_at: undefined };
+      }
+      if (this.selectedCamera?.id === cameraId) {
+        this.selectedCamera = { ...this.selectedCamera, status: 'offline', connected_at: undefined };
+      }
+    });
   }
 
   ngOnDestroy(): void {
@@ -47,6 +59,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
       clearInterval(this.pollingHandle);
       this.pollingHandle = null;
     }
+    this.offlineSubscription?.unsubscribe();
     this.leaveCurrentChannel();
     this.signalingService.disconnect();
   }
