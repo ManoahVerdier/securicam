@@ -4,43 +4,34 @@ import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.coroutines.withContext
 import okhttp3.*
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.webrtc.IceCandidate
 import java.io.File
-import java.io.IOException
-import java.util.concurrent.TimeUnit
 
+/**
+ * Manages the WebSocket connection to Laravel Reverb and routes inbound events
+ * to the appropriate callbacks. All HTTP API calls are handled by [SignalingHttpClient].
+ */
 class SignalingClient(
     private val serverUrl: String,
-    private val authToken: String,
+    authToken: String,
     private val cameraId: Int
 ) {
-
     companion object {
         private const val TAG = "SignalingClient"
         private const val EVENT_SUBSCRIPTION_SUCCEEDED_INTERNAL = "pusher_internal:subscription_succeeded"
         private const val EVENT_SUBSCRIPTION_SUCCEEDED = "pusher:subscription_succeeded"
         private const val EVENT_PUSHER_ERROR = "pusher:error"
-        private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 
     private val gson = Gson()
-    private var webSocket: WebSocket? = null
-    private val normalizedServerUrl: String? = normalizeServerUrl(serverUrl)
+    private val http = SignalingHttpClient(serverUrl, authToken, cameraId)
 
-    private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .build()
+    private var webSocket: WebSocket? = null
+    private var connectionReadyDeferred: CompletableDeferred<Boolean>? = null
+    private var socketId: String? = null
 
     private var onOfferCallback: ((String) -> Unit)? = null
     private var onAnswerCallback: ((String) -> Unit)? = null
@@ -51,8 +42,10 @@ class SignalingClient(
     private var onStartRecordingCallback: (() -> Unit)? = null
     private var onStopRecordingCallback: (() -> Unit)? = null
     private var onSwitchCameraCallback: ((String?) -> Unit)? = null
-    private var connectionReadyDeferred: CompletableDeferred<Boolean>? = null
-    private var socketId: String? = null
+
+    // -------------------------------------------------------------------------
+    // Connection lifecycle
+    // -------------------------------------------------------------------------
 
     suspend fun connect(
         onOffer: (String) -> Unit,
@@ -63,7 +56,7 @@ class SignalingClient(
         onStopStreaming: () -> Unit,
         onStartRecording: () -> Unit,
         onStopRecording: () -> Unit,
-        onSwitchCamera: (lensId: String?) -> Unit = { _ -> },
+        onSwitchCamera: (lensId: String?) -> Unit = {},
         timeoutMs: Long = 10_000L,
         onError: (String) -> Unit = {}
     ): Boolean {
@@ -80,221 +73,140 @@ class SignalingClient(
 
         val wsUrl = buildWebSocketUrl()
         if (wsUrl == null) {
-            val errorMessage = "Cannot connect signaling: invalid server URL '$serverUrl'"
-            Log.e(TAG, errorMessage)
-            onError(errorMessage)
+            val msg = "Cannot connect signaling: invalid server URL '$serverUrl'"
+            Log.e(TAG, msg)
+            onError(msg)
             return false
         }
 
-        Log.d(TAG, "Connecting to WebSocket URL: $wsUrl")
-        Log.d(TAG, "Using serverUrl='$serverUrl' normalizedServerUrl='$normalizedServerUrl'")
+        Log.d(TAG, "Connecting to $wsUrl")
 
         val request = try {
-            Request.Builder()
-                .url(wsUrl)
-                .addHeader("Authorization", "Bearer $authToken")
-                .build()
+            Request.Builder().url(wsUrl).build()
         } catch (e: IllegalArgumentException) {
-            val errorMessage = "Cannot connect signaling: invalid WebSocket URL '$wsUrl'"
-            Log.e(TAG, errorMessage, e)
-            onError(errorMessage)
+            val msg = "Cannot connect signaling: invalid WebSocket URL '$wsUrl'"
+            Log.e(TAG, msg, e)
+            onError(msg)
             connectionReadyDeferred?.complete(false)
             return false
         }
 
-        webSocket = httpClient.newWebSocket(request, object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
-                Log.d(TAG, "WebSocket connected (onOpen), waiting for connection_established")
-                Log.d(TAG, "onOpen response code=${response.code} headers=${response.headers}")
-            }
-
-            override fun onMessage(webSocket: WebSocket, text: String) {
-                Log.d(TAG, "WebSocket message: $text")
-                handleMessage(text)
-            }
-
-            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                Log.d(TAG, "WebSocket closing: $code - $reason")
-            }
-
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.e(TAG, "WebSocket onFailure: ${t.javaClass.simpleName}: ${t.message}", t)
-                Log.e(TAG, "WebSocket failure response: code=${response?.code} message=${response?.message} body=${response?.body?.string()}")
-                connectionReadyDeferred?.let {
-                    if (!it.isCompleted) {
-                        it.complete(false)
-                    }
+        webSocket = http.let {
+            // OkHttp client is internal to SignalingHttpClient; we build our own here
+            // for the WebSocket because it needs a different listener lifecycle.
+            OkHttpClient().newWebSocket(request, object : WebSocketListener() {
+                override fun onOpen(ws: WebSocket, response: Response) {
+                    Log.d(TAG, "WebSocket opened, awaiting connection_established")
                 }
-            }
 
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                Log.d(TAG, "WebSocket closed: $code - $reason")
-                connectionReadyDeferred?.let {
-                    if (!it.isCompleted) {
-                        it.complete(false)
-                    }
+                override fun onMessage(ws: WebSocket, text: String) {
+                    Log.d(TAG, "WS message: $text")
+                    handleMessage(text)
                 }
-            }
-        })
-        val readyDeferred = connectionReadyDeferred ?: return false
-        val awaitedResult = withTimeoutOrNull(timeoutMs) { readyDeferred.await() }
-        val connected = awaitedResult ?: false
 
-        if (!connected) {
-            if (awaitedResult == null) {
-                Log.e(TAG, "WebSocket signaling connection timed out after ${timeoutMs}ms")
-            } else {
-                Log.e(TAG, "WebSocket signaling subscription failed")
-            }
-            disconnect()
-        }
+                override fun onClosing(ws: WebSocket, code: Int, reason: String) {
+                    Log.d(TAG, "WS closing: $code - $reason")
+                }
 
-        return connected
-    }
-
-    private fun performAuthAndSubscribe() {
-        val sid = socketId ?: run {
-            Log.e(TAG, "performAuthAndSubscribe called without socket_id")
-            connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
-            return
-        }
-        val channelName = "private-camera.$cameraId"
-        val authUrl = buildBroadcastingAuthUrl() ?: run {
-            Log.e(TAG, "Cannot build broadcasting/auth URL from '$serverUrl'")
-            connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
-            return
-        }
-
-        val formBody = okhttp3.FormBody.Builder()
-            .add("socket_id", sid)
-            .add("channel_name", channelName)
-            .build()
-
-        val request = Request.Builder()
-            .url(authUrl)
-            .post(formBody)
-            .addHeader("Authorization", "Bearer $authToken")
-            .addHeader("Accept", "application/json")
-            .build()
-
-        try {
-            val response = httpClient.newCall(request).execute()
-            if (response.isSuccessful) {
-                val body = response.body?.string()
-                val authJson = gson.fromJson(body, JsonObject::class.java)
-                val auth = authJson?.get("auth")?.asString
-                if (auth != null) {
-                    val subscribeMessage = JsonObject().apply {
-                        addProperty("event", "pusher:subscribe")
-                        add("data", JsonObject().apply {
-                            addProperty("channel", channelName)
-                            addProperty("auth", auth)
-                        })
-                    }
-                    webSocket?.send(gson.toJson(subscribeMessage))
-                    Log.d(TAG, "Subscribed to $channelName with proper auth")
-                } else {
-                    Log.e(TAG, "No auth field in broadcasting/auth response: $body")
+                override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
+                    Log.e(TAG, "WS failure: ${t.message}", t)
                     connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
                 }
-            } else {
-                Log.e(TAG, "broadcasting/auth failed: ${response.code} - ${response.body?.string()}")
-                connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error calling broadcasting/auth", e)
-            connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
+
+                override fun onClosed(ws: WebSocket, code: Int, reason: String) {
+                    Log.d(TAG, "WS closed: $code - $reason")
+                    connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
+                }
+            })
         }
+
+        val result = withTimeoutOrNull(timeoutMs) { connectionReadyDeferred!!.await() } ?: false
+        if (!result) {
+            Log.e(TAG, "Signaling connection failed or timed out")
+            disconnect()
+        }
+        return result
     }
 
-    private fun buildBroadcastingAuthUrl(): String? {
-        val baseUrl = normalizedServerUrl ?: return null
-        val parsed = baseUrl.toHttpUrlOrNull() ?: return null
-        val pathSegments = parsed.pathSegments.filter { it.isNotEmpty() }.toMutableList()
-        if (pathSegments.lastOrNull() == "api") {
-            pathSegments.removeAt(pathSegments.lastIndex)
-        }
-        val builder = parsed.newBuilder().encodedPath("/")
-        pathSegments.forEach { builder.addPathSegment(it) }
-        builder.addPathSegment("broadcasting")
-        builder.addPathSegment("auth")
-        return builder.build().toString()
+    fun disconnect() {
+        connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
+        connectionReadyDeferred = null
+        webSocket?.close(1000, "Client disconnecting")
+        webSocket = null
     }
+
+    // -------------------------------------------------------------------------
+    // HTTP API — delegated to SignalingHttpClient
+    // -------------------------------------------------------------------------
+
+    suspend fun sendOffer(sdp: String) = http.sendOffer(sdp)
+    suspend fun sendAnswer(sdp: String) = http.sendAnswer(sdp)
+    suspend fun sendIceCandidate(candidate: IceCandidate) = http.sendIceCandidate(candidate)
+    suspend fun updateCameraStatus(status: String) = http.updateCameraStatus(status)
+    suspend fun notifyConnect(availableLenses: List<Map<String, String>> = emptyList(), activeLens: String? = null) =
+        http.notifyConnect(availableLenses, activeLens)
+    suspend fun notifyHeartbeat(availableLenses: List<Map<String, String>> = emptyList(), activeLens: String? = null) =
+        http.notifyHeartbeat(availableLenses, activeLens)
+    suspend fun notifyDisconnect() = http.notifyDisconnect()
+    suspend fun uploadCapture(type: String, file: File, durationSeconds: Long? = null) =
+        http.uploadCapture(type, file, durationSeconds)
+
+    // -------------------------------------------------------------------------
+    // WebSocket message routing
+    // -------------------------------------------------------------------------
 
     private fun handleMessage(message: String) {
         try {
             val json = gson.fromJson(message, JsonObject::class.java)
             val event = json.get("event")?.asString ?: return
 
-            val data = json.get("data")?.let { dataElement ->
+            val data = json.get("data")?.let { el ->
                 try {
                     when {
-                        dataElement.isJsonObject -> dataElement.asJsonObject
-                        dataElement.isJsonPrimitive && dataElement.asJsonPrimitive.isString ->
-                            gson.fromJson(dataElement.asString, JsonObject::class.java)
+                        el.isJsonObject -> el.asJsonObject
+                        el.isJsonPrimitive && el.asJsonPrimitive.isString ->
+                            gson.fromJson(el.asString, JsonObject::class.java)
                         else -> null
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to parse data field", e)
-                    null
+                    Log.e(TAG, "Failed to parse data field", e); null
                 }
             }
 
             when (event) {
                 "pusher:ping" -> {
-                    Log.d(TAG, "Received pusher:ping, replying with pusher:pong")
-                    val pong = JsonObject().apply {
+                    webSocket?.send(gson.toJson(JsonObject().apply {
                         addProperty("event", "pusher:pong")
                         add("data", JsonObject())
-                    }
-                    webSocket?.send(gson.toJson(pong))
+                    }))
                 }
-                "pusher:pong" -> {
-                    Log.d(TAG, "Received pusher:pong")
-                }
+                "pusher:pong" -> Unit
                 "pusher:connection_established" -> {
                     val sid = data?.get("socket_id")?.asString
-                    Log.d(TAG, "Connection established, socket_id=$sid")
                     if (sid != null) {
                         socketId = sid
-                        performAuthAndSubscribe()
+                        subscribeToChannel(sid)
                     } else {
-                        Log.e(TAG, "pusher:connection_established missing socket_id")
+                        Log.e(TAG, "connection_established missing socket_id")
                         connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
                     }
                 }
                 EVENT_SUBSCRIPTION_SUCCEEDED_INTERNAL, EVENT_SUBSCRIPTION_SUCCEEDED -> {
-                    Log.d(TAG, "WebSocket channel subscription succeeded for camera $cameraId")
+                    Log.d(TAG, "Subscribed to camera $cameraId channel")
                     connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(true) }
                 }
                 EVENT_PUSHER_ERROR -> {
                     Log.e(TAG, "Pusher error: $message")
                     connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
                 }
-                "webrtc.offer" -> {
-                    data?.get("sdp")?.asString?.let { onOfferCallback?.invoke(it) }
-                }
-                "webrtc.answer" -> {
-                    data?.get("sdp")?.asString?.let { onAnswerCallback?.invoke(it) }
-                }
-                "webrtc.ice-candidate" -> {
-                    data?.get("candidate")?.toString()?.let { onIceCandidateCallback?.invoke(it) }
-                }
-                "capture.photo" -> {
-                    onCapturePhotoCallback?.invoke()
-                }
-                "video.streaming.start" -> {
-                    onStartStreamingCallback?.invoke()
-                }
-                "video.streaming.stop" -> {
-                    onStopStreamingCallback?.invoke()
-                }
-                "video.recording.start" -> {
-                    onStartRecordingCallback?.invoke()
-                }
-                "video.recording.stop" -> {
-                    onStopRecordingCallback?.invoke()
-                }
+                "webrtc.offer" -> data?.get("sdp")?.asString?.let { onOfferCallback?.invoke(it) }
+                "webrtc.answer" -> data?.get("sdp")?.asString?.let { onAnswerCallback?.invoke(it) }
+                "webrtc.ice-candidate" -> data?.get("candidate")?.toString()?.let { onIceCandidateCallback?.invoke(it) }
+                "capture.photo" -> onCapturePhotoCallback?.invoke()
+                "video.streaming.start" -> onStartStreamingCallback?.invoke()
+                "video.streaming.stop" -> onStopStreamingCallback?.invoke()
+                "video.recording.start" -> onStartRecordingCallback?.invoke()
+                "video.recording.stop" -> onStopRecordingCallback?.invoke()
                 "camera.switch" -> {
                     val lensId = data?.get("lens_id")
                         ?.takeIf { !it.isJsonNull && it.isJsonPrimitive }
@@ -303,239 +215,50 @@ class SignalingClient(
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error handling message", e)
+            Log.e(TAG, "Error handling WS message", e)
         }
     }
 
-    suspend fun sendOffer(sdp: String) = withContext(Dispatchers.IO) {
-        val body = JsonObject().apply {
-            addProperty("camera_id", cameraId)
-            addProperty("sdp", sdp)
-            addProperty("type", "offer")
+    private fun subscribeToChannel(sid: String) {
+        val ws = webSocket ?: run {
+            connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
+            return
         }
-
-        val url = buildApiUrl("/webrtc/offer") ?: run {
-            Log.e(TAG, "Failed to send offer: invalid server URL '$serverUrl'")
-            return@withContext false
-        }
-        return@withContext makeRequest(url, body)
-    }
-
-    suspend fun sendAnswer(sdp: String) = withContext(Dispatchers.IO) {
-        val body = JsonObject().apply {
-            addProperty("camera_id", cameraId)
-            addProperty("sdp", sdp)
-            addProperty("type", "answer")
-        }
-
-        val url = buildApiUrl("/webrtc/answer") ?: run {
-            Log.e(TAG, "Failed to send answer: invalid server URL '$serverUrl'")
-            return@withContext false
-        }
-        return@withContext makeRequest(url, body)
-    }
-
-    suspend fun sendIceCandidate(candidate: IceCandidate) = withContext(Dispatchers.IO) {
-        val body = JsonObject().apply {
-            addProperty("camera_id", cameraId)
-            add("candidate", JsonObject().apply {
-                addProperty("candidate", candidate.sdp)
-                addProperty("sdpMid", candidate.sdpMid)
-                addProperty("sdpMLineIndex", candidate.sdpMLineIndex)
-            })
-        }
-
-        val url = buildApiUrl("/webrtc/ice-candidate") ?: run {
-            Log.e(TAG, "Failed to send ICE candidate: invalid server URL '$serverUrl'")
-            return@withContext false
-        }
-        return@withContext makeRequest(url, body)
-    }
-
-    suspend fun updateCameraStatus(status: String) = withContext(Dispatchers.IO) {
-        val body = JsonObject().apply {
-            addProperty("status", status)
-        }
-
-        val url = buildApiUrl("/cameras/$cameraId/status") ?: run {
-            Log.e(TAG, "Failed to update camera status: invalid server URL '$serverUrl'")
-            return@withContext false
-        }
-        return@withContext makeRequest(url, body, "PATCH")
-    }
-
-    suspend fun notifyConnect(
-        availableLenses: List<Map<String, String>> = emptyList(),
-        activeLens: String? = null
-    ): Boolean = withContext(Dispatchers.IO) {
-        val url = buildApiUrl("/cameras/$cameraId/connect") ?: run {
-            Log.e(TAG, "Failed to notify connect: invalid server URL '$serverUrl'")
-            return@withContext false
-        }
-        val body = JsonObject().apply {
-            if (availableLenses.isNotEmpty()) {
-                add("available_lenses", gson.toJsonTree(availableLenses))
+        val channelName = "private-camera.$cameraId"
+        http.performAuthAndSubscribe(
+            webSocket = ws,
+            socketId = sid,
+            onSuccess = { auth ->
+                val msg = gson.toJson(JsonObject().apply {
+                    addProperty("event", "pusher:subscribe")
+                    add("data", JsonObject().apply {
+                        addProperty("channel", channelName)
+                        addProperty("auth", auth)
+                    })
+                })
+                ws.send(msg)
+                Log.d(TAG, "Subscribe sent for $channelName")
+            },
+            onFailure = {
+                connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
             }
-            if (!activeLens.isNullOrBlank()) {
-                addProperty("active_lens", activeLens)
-            }
-        }
-        return@withContext makeRequest(url, body)
+        )
     }
 
-    suspend fun notifyHeartbeat(
-        availableLenses: List<Map<String, String>> = emptyList(),
-        activeLens: String? = null
-    ): Boolean = withContext(Dispatchers.IO) {
-        val url = buildApiUrl("/cameras/$cameraId/heartbeat") ?: run {
-            Log.e(TAG, "Failed to send heartbeat: invalid server URL '$serverUrl'")
-            return@withContext false
-        }
-        val body = JsonObject().apply {
-            if (availableLenses.isNotEmpty()) {
-                add("available_lenses", gson.toJsonTree(availableLenses))
-            }
-            if (!activeLens.isNullOrBlank()) {
-                addProperty("active_lens", activeLens)
-            }
-        }
-        return@withContext makeRequest(url, body)
-    }
-
-    suspend fun notifyDisconnect(): Boolean = withContext(Dispatchers.IO) {
-        val url = buildApiUrl("/cameras/$cameraId/disconnect") ?: run {
-            Log.e(TAG, "Failed to notify disconnect: invalid server URL '$serverUrl'")
-            return@withContext false
-        }
-        return@withContext makeRequest(url, JsonObject())
-    }
-
-    /**
-     * Upload a photo or recorded video as a multipart capture. Returns true on
-     * HTTP 2xx. The backend stores the file and broadcasts a CaptureCreated event.
-     */
-    suspend fun uploadCapture(
-        type: String,
-        file: File,
-        durationSeconds: Long? = null
-    ): Boolean = withContext(Dispatchers.IO) {
-        val url = buildApiUrl("/captures/upload") ?: run {
-            Log.e(TAG, "Failed to upload capture: invalid server URL '$serverUrl'")
-            return@withContext false
-        }
-
-        val mediaType = when (type) {
-            "photo" -> "image/jpeg".toMediaTypeOrNull()
-            "video" -> "video/mp4".toMediaTypeOrNull()
-            else -> "application/octet-stream".toMediaTypeOrNull()
-        }
-
-        val builder = MultipartBody.Builder()
-            .setType(MultipartBody.FORM)
-            .addFormDataPart("camera_id", cameraId.toString())
-            .addFormDataPart("type", type)
-            .addFormDataPart(
-                "file",
-                file.name,
-                file.asRequestBody(mediaType)
-            )
-        if (durationSeconds != null) {
-            builder.addFormDataPart("duration", durationSeconds.toString())
-        }
-
-        val request = Request.Builder()
-            .url(url)
-            .addHeader("Authorization", "Bearer $authToken")
-            .addHeader("Accept", "application/json")
-            .post(builder.build())
-            .build()
-
-        return@withContext try {
-            val response = httpClient.newCall(request).execute()
-            response.isSuccessful.also {
-                if (!it) {
-                    Log.e(TAG, "Capture upload failed: ${response.code} - ${response.body?.string()}")
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Capture upload error", e)
-            false
-        }
-    }
-
-    private fun makeRequest(url: String, body: JsonObject, method: String = "POST"): Boolean {
-        val requestBody = gson.toJson(body).toRequestBody(JSON_MEDIA_TYPE)
-
-        val request = Request.Builder()
-            .url(url)
-            .addHeader("Authorization", "Bearer $authToken")
-            .addHeader("Accept", "application/json")
-            .method(method, requestBody)
-            .build()
-
-        return try {
-            val response = httpClient.newCall(request).execute()
-            response.isSuccessful.also {
-                if (!it) {
-                    Log.e(TAG, "Request failed: ${response.code} - ${response.body?.string()}")
-                }
-            }
-        } catch (e: IllegalArgumentException) {
-            Log.e(TAG, "Invalid request URL: $url", e)
-            false
-        } catch (e: IOException) {
-            Log.e(TAG, "Request error", e)
-            false
-        }
-    }
-
-    private fun buildApiUrl(path: String): String? {
-        val baseUrl = normalizedServerUrl ?: run {
-            Log.e(TAG, "Invalid server URL for API requests: '$serverUrl'")
-            return null
-        }
-        return "${baseUrl.removeSuffix("/")}/${path.trimStart('/')}"
-    }
+    // -------------------------------------------------------------------------
+    // URL helpers
+    // -------------------------------------------------------------------------
 
     private fun buildWebSocketUrl(): String? {
-        val baseUrl = normalizedServerUrl ?: return null
+        val baseUrl = http.normalizedUrl ?: return null
         val parsed = baseUrl.toHttpUrlOrNull() ?: return null
         val pathSegments = parsed.pathSegments.filter { it.isNotEmpty() }.toMutableList()
-        if (pathSegments.lastOrNull() == "api") {
-            pathSegments.removeAt(pathSegments.lastIndex)
-        }
-
-        // Build as http/https first — OkHttp's HttpUrl.Builder rejects ws/wss schemes
+        if (pathSegments.lastOrNull() == "api") pathSegments.removeAt(pathSegments.lastIndex)
         val builder = parsed.newBuilder().encodedPath("/")
-        pathSegments.forEach { segment ->
-            builder.addPathSegment(segment)
-        }
+        pathSegments.forEach { builder.addPathSegment(it) }
         builder.addPathSegment("app")
         builder.addPathSegment("securicam-app-key")
         val httpUrl = builder.build().toString()
-        // Then swap scheme to ws/wss
         return httpUrl.replaceFirst("https://", "wss://").replaceFirst("http://", "ws://")
-    }
-
-    private fun normalizeServerUrl(rawUrl: String): String? {
-        val trimmed = rawUrl.trim()
-        if (trimmed.isEmpty()) {
-            return null
-        }
-
-        val parsed = trimmed.toHttpUrlOrNull() ?: "http://$trimmed".toHttpUrlOrNull() ?: return null
-
-        return parsed.toString().removeSuffix("/")
-    }
-
-    fun disconnect() {
-        connectionReadyDeferred?.let {
-            if (!it.isCompleted) {
-                it.complete(false)
-            }
-        }
-        connectionReadyDeferred = null
-        webSocket?.close(1000, "Client disconnecting")
-        webSocket = null
     }
 }

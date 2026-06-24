@@ -31,11 +31,13 @@ ARG PUBLIC_HOST=securicam.example.com
 ARG TURN_HOST=securicam.example.com
 ARG TURN_USER=securicam
 ARG TURN_PASSWORD=changeme
+ARG REVERB_APP_KEY=securicam-app-key
 
 RUN sed -i \
         -e "s|__PUBLIC_HOST__|${PUBLIC_HOST}|g" \
         -e "s|__TURN_HOST__|${TURN_HOST}|g" \
         -e "s|__TURN_USER__|${TURN_USER}|g" \
         -e "s|__TURN_PASSWORD__|${TURN_PASSWORD}|g" \
+        -e "s|__REVERB_APP_KEY__|${REVERB_APP_KEY}|g" \
         src/environments/environment.prod.ts \
  && npx ng build --configuration production

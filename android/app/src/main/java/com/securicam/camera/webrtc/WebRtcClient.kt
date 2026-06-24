@@ -303,76 +303,62 @@ class WebRtcClient(
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
         }
 
-        peerConnection = factory.createPeerConnection(
-            rtcConfig,
-            object : PeerConnection.Observer {
-                override fun onSignalingChange(state: PeerConnection.SignalingState?) {
-                    Log.d(TAG, "onSignalingChange: $state")
-                }
-
-                override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
-                    Log.d(TAG, "onIceConnectionChange: $state")
-                    when (state) {
-                        PeerConnection.IceConnectionState.CONNECTED,
-                        PeerConnection.IceConnectionState.COMPLETED ->
-                            connectionStateCallback?.invoke(true)
-                        PeerConnection.IceConnectionState.DISCONNECTED,
-                        PeerConnection.IceConnectionState.FAILED,
-                        PeerConnection.IceConnectionState.CLOSED ->
-                            connectionStateCallback?.invoke(false)
-                        else -> {}
-                    }
-                }
-
-                override fun onIceConnectionReceivingChange(receiving: Boolean) {
-                    Log.d(TAG, "onIceConnectionReceivingChange: $receiving")
-                }
-
-                override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {
-                    Log.d(TAG, "onIceGatheringChange: $state")
-                }
-
-                override fun onIceCandidate(candidate: IceCandidate?) {
-                    candidate?.let {
-                        Log.d(TAG, "onIceCandidate: ${it.sdp}")
-                        iceCandidateCallback?.invoke(it)
-                    }
-                }
-
-                override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {
-                    Log.d(TAG, "onIceCandidatesRemoved")
-                }
-
-                override fun onAddStream(stream: MediaStream?) {
-                    Log.d(TAG, "onAddStream")
-                }
-
-                override fun onRemoveStream(stream: MediaStream?) {
-                    Log.d(TAG, "onRemoveStream")
-                }
-
-                override fun onDataChannel(channel: DataChannel?) {
-                    Log.d(TAG, "onDataChannel")
-                }
-
-                override fun onRenegotiationNeeded() {
-                    Log.d(TAG, "onRenegotiationNeeded")
-                }
-
-                override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
-                    Log.d(TAG, "onAddTrack")
-                }
-            }
-        )
+        peerConnection = factory.createPeerConnection(rtcConfig, PeerConnectionObserver())
             ?: throw IllegalStateException("Failed to create peer connection")
 
-        // Add local tracks to peer connection
         localVideoTrack?.let {
             val sender = peerConnection?.addTrack(it, listOf("stream"))
-            sender?.let { configureVideoSender(it) }
+            sender?.let { s -> configureVideoSender(s) }
         }
         localAudioTrack?.let {
             peerConnection?.addTrack(it, listOf("stream"))
+        }
+    }
+
+    private inner class PeerConnectionObserver : PeerConnection.Observer {
+        override fun onSignalingChange(state: PeerConnection.SignalingState?) {
+            Log.d(TAG, "onSignalingChange: $state")
+        }
+
+        override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
+            Log.d(TAG, "onIceConnectionChange: $state")
+            when (state) {
+                PeerConnection.IceConnectionState.CONNECTED,
+                PeerConnection.IceConnectionState.COMPLETED ->
+                    connectionStateCallback?.invoke(true)
+                PeerConnection.IceConnectionState.DISCONNECTED,
+                PeerConnection.IceConnectionState.FAILED,
+                PeerConnection.IceConnectionState.CLOSED ->
+                    connectionStateCallback?.invoke(false)
+                else -> {}
+            }
+        }
+
+        override fun onIceConnectionReceivingChange(receiving: Boolean) {
+            Log.d(TAG, "onIceConnectionReceivingChange: $receiving")
+        }
+
+        override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {
+            Log.d(TAG, "onIceGatheringChange: $state")
+        }
+
+        override fun onIceCandidate(candidate: IceCandidate?) {
+            candidate?.let {
+                Log.d(TAG, "onIceCandidate: ${it.sdp}")
+                iceCandidateCallback?.invoke(it)
+            }
+        }
+
+        override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {
+            Log.d(TAG, "onIceCandidatesRemoved")
+        }
+
+        override fun onAddStream(stream: MediaStream?) { Log.d(TAG, "onAddStream") }
+        override fun onRemoveStream(stream: MediaStream?) { Log.d(TAG, "onRemoveStream") }
+        override fun onDataChannel(channel: DataChannel?) { Log.d(TAG, "onDataChannel") }
+        override fun onRenegotiationNeeded() { Log.d(TAG, "onRenegotiationNeeded") }
+        override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
+            Log.d(TAG, "onAddTrack")
         }
     }
 

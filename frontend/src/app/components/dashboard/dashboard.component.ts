@@ -30,6 +30,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   private pollingHandle: ReturnType<typeof setInterval> | null = null;
   private joinedChannelCameraId: number | null = null;
   private onlineSubscription: Subscription | null = null;
+  private offlineSubscription: Subscription | null = null;
 
   constructor(
     private authService: AuthService,
@@ -52,6 +53,16 @@ export class DashboardComponent implements OnInit, OnDestroy {
         this.selectedCamera = { ...this.selectedCamera, status: 'online' };
       }
     });
+
+    this.offlineSubscription = this.signalingService.cameraOffline$.subscribe(({ cameraId }) => {
+      const idx = this.cameras.findIndex(c => c.id === cameraId);
+      if (idx !== -1) {
+        this.cameras[idx] = { ...this.cameras[idx], status: 'offline', connected_at: undefined };
+      }
+      if (this.selectedCamera?.id === cameraId) {
+        this.selectedCamera = { ...this.selectedCamera, status: 'offline', connected_at: undefined };
+      }
+    });
   }
 
   ngOnDestroy(): void {
@@ -60,6 +71,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
       this.pollingHandle = null;
     }
     this.onlineSubscription?.unsubscribe();
+    this.offlineSubscription?.unsubscribe();
     this.leaveCurrentChannel();
     this.signalingService.disconnect();
   }
