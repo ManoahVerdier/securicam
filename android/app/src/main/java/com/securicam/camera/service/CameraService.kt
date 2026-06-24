@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
@@ -32,6 +33,7 @@ import com.securicam.camera.webrtc.WebRtcClient
 import com.securicam.camera.api.SignalingClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -62,6 +64,16 @@ class CameraService : LifecycleService() {
 
         private const val RENEGOTIATION_DEBOUNCE_MS = 1500L
         private const val HEARTBEAT_INTERVAL_MS = 30_000L
+
+        private const val PREFS_NAME = "securicam_prefs"
+        private const val KEY_SERVER_URL = "server_url"
+        private const val KEY_AUTH_TOKEN = "auth_token"
+        private const val KEY_CAMERA_ID = "camera_id"
+        private const val KEY_TURN_HOST = "turn_host"
+        private const val KEY_TURN_USER = "turn_user"
+        private const val KEY_TURN_PASSWORD = "turn_password"
+
+        private val RECONNECT_DELAYS_MS = longArrayOf(5_000, 15_000, 30_000, 60_000, 300_000)
     }
 
     private val binder = LocalBinder()
@@ -73,6 +85,9 @@ class CameraService : LifecycleService() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private lateinit var heartbeatManager: HeartbeatManager
+    private var reconnectJob: Job? = null
+    private var reconnectAttempts: Int = 0
+    private var isStopping: Boolean = false
 
     private var serverUrl: String = ""
     private var authToken: String = ""
@@ -110,17 +125,16 @@ class CameraService : LifecycleService() {
         fun getService(): CameraService = this@CameraService
     }
 
-    /**
-     * Force a fresh signaling connection without restarting the whole service.
-     * Use this when the WebSocket was lost mid-session.
-     */
     fun reconnect() {
         if (isReconnecting) return
+        cancelReconnect()
+        reconnectAttempts = 0
         serviceScope.launch {
             isReconnecting = true
             try {
                 disconnectSignaling()
                 if (ensureSignalingConnected()) {
+                    reconnectAttempts = 0
                     val activeLens = webRtcClient?.activeLensId ?: LensCatalog.defaultLensId(applicationContext)
                     signalingClient?.notifyConnect(
                         availableLenses = lensCatalogPayload(),
@@ -129,7 +143,8 @@ class CameraService : LifecycleService() {
                     startHeartbeat()
                     Log.i(TAG, "Reconnected successfully")
                 } else {
-                    Log.w(TAG, "Reconnect failed")
+                    Log.w(TAG, "Reconnect failed — scheduling auto-reconnect")
+                    scheduleAutoReconnect()
                 }
             } finally {
                 isReconnecting = false
@@ -158,22 +173,36 @@ class CameraService : LifecycleService() {
 
         when (intent?.action) {
             ACTION_PREPARE -> {
+                isStopping = false
                 loadConfiguration(intent)
                 startForegroundService()
                 connectSignalingIfNeeded()
             }
             ACTION_START -> {
+                isStopping = false
                 loadConfiguration(intent)
                 startForegroundService()
                 connectSignalingIfNeeded()
             }
             ACTION_STOP -> {
+                isStopping = true
+                cancelReconnect()
                 stopHeartbeat()
                 stopStreaming(keepReady = false)
                 serviceScope.launch {
                     signalingClient?.notifyDisconnect()
                     disconnectSignaling()
                     stopSelf()
+                }
+            }
+            else -> {
+                // Restarted by START_STICKY with null intent — restore config from prefs
+                if (!isStopping && serverUrl.isEmpty()) {
+                    loadConfigurationFromPrefs()
+                }
+                if (!isStopping && serverUrl.isNotEmpty() && authToken.isNotEmpty() && cameraId > 0) {
+                    startForegroundService()
+                    connectSignalingIfNeeded()
                 }
             }
         }
@@ -203,12 +232,12 @@ class CameraService : LifecycleService() {
         val notification = createNotification()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ServiceCompat.startForeground(
-                this,
-                NOTIFICATION_ID,
-                notification,
+            val type = if (hasCameraPermission()) {
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-            )
+            } else {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            }
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -256,11 +285,41 @@ class CameraService : LifecycleService() {
         turnPassword = intent.getStringExtra(EXTRA_TURN_PASSWORD) ?: ""
     }
 
+    private fun loadConfigurationFromPrefs() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        serverUrl = prefs.getString(KEY_SERVER_URL, "") ?: ""
+        authToken = prefs.getString(KEY_AUTH_TOKEN, "") ?: ""
+        cameraId = prefs.getInt(KEY_CAMERA_ID, 0)
+        turnHost = prefs.getString(KEY_TURN_HOST, "") ?: ""
+        turnUser = prefs.getString(KEY_TURN_USER, "") ?: ""
+        turnPassword = prefs.getString(KEY_TURN_PASSWORD, "") ?: ""
+    }
+
+    private fun scheduleAutoReconnect() {
+        if (isStopping) return
+        cancelReconnect()
+        val delayMs = RECONNECT_DELAYS_MS.getOrElse(reconnectAttempts) { RECONNECT_DELAYS_MS.last() }
+        reconnectAttempts++
+        Log.i(TAG, "WebSocket disconnected — reconnecting in ${delayMs}ms (attempt #$reconnectAttempts)")
+        reconnectJob = serviceScope.launch {
+            delay(delayMs)
+            if (!isStopping) {
+                connectSignalingIfNeeded()
+            }
+        }
+    }
+
+    private fun cancelReconnect() {
+        reconnectJob?.cancel()
+        reconnectJob = null
+    }
+
     private fun connectSignalingIfNeeded() {
         serviceScope.launch {
             isConnecting = true
             try {
                 if (ensureSignalingConnected()) {
+                    reconnectAttempts = 0
                     val activeLens = webRtcClient?.activeLensId ?: LensCatalog.defaultLensId(applicationContext)
                     signalingClient?.notifyConnect(
                         availableLenses = lensCatalogPayload(),
@@ -268,7 +327,8 @@ class CameraService : LifecycleService() {
                     )
                     startHeartbeat()
                 } else {
-                    Log.w(TAG, "Signaling connection is not ready")
+                    Log.w(TAG, "Signaling connection failed — will retry")
+                    scheduleAutoReconnect()
                 }
             } finally {
                 isConnecting = false
@@ -316,6 +376,14 @@ class CameraService : LifecycleService() {
                 },
                 onError = { error ->
                     Log.e(TAG, "Signaling error: $error")
+                },
+                onDisconnected = {
+                    Log.w(TAG, "WebSocket dropped — scheduling auto-reconnect")
+                    serviceScope.launch {
+                        signalingClient = null
+                        stopHeartbeat()
+                        scheduleAutoReconnect()
+                    }
                 }
             )
         } catch (e: Exception) {
@@ -340,13 +408,7 @@ class CameraService : LifecycleService() {
 
     private fun startStreamingIfNeeded() {
         if (isStreaming || isStreamStarting) {
-            // Already streaming: a (new) viewer just asked for the stream.
-            // Re-issue an offer so the freshly-subscribed peer receives it.
             if (webRtcClient != null) {
-                // Debounce: the web viewer can fire several start requests in a row
-                // (initial connect + status retry). Skip extra renegotiations within
-                // a short window — they cause libwebrtc to recreate the encoder and
-                // briefly tear down the active camera capture session.
                 val now = System.currentTimeMillis()
                 if (now - lastRenegotiationAt < RENEGOTIATION_DEBOUNCE_MS) {
                     Log.d(TAG, "startStreamingIfNeeded: skipping duplicate renegotiation (debounced)")
@@ -410,11 +472,9 @@ class CameraService : LifecycleService() {
 
                 updateStatus("online")
 
-                // Initialize WebRTC
                 val iceServers = WebRtcClient.buildIceServers(turnHost, turnUser, turnPassword)
                 webRtcClient = WebRtcClient(applicationContext, cameraProvider!!, this@CameraService, iceServers)
 
-                // Set callbacks before creating the offer so no early candidates are lost
                 webRtcClient?.setConnectionStateCallback { connected ->
                     if (connected && !isStreaming) {
                         isStreaming = true
@@ -432,15 +492,11 @@ class CameraService : LifecycleService() {
                     }
                 }
 
-                // Create and send offer
                 webRtcClient?.createOffer { sdp ->
                     serviceScope.launch {
                         signalingClient?.sendOffer(sdp)
                     }
                 }
-
-                // isStreaming will be set to true by the connection-state callback
-                // when ICE reaches CONNECTED; isStreamStarting was set by the caller.
 
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start WebRTC streaming", e)
@@ -567,8 +623,6 @@ class CameraService : LifecycleService() {
         activeRecorder = null
         val client = webRtcClient
         recorder.stop()
-        // The recorder finalizes itself on the next frame; remove the sink shortly after
-        // to stop feeding it, then it will close its encoder.
         serviceScope.launch {
             delay(500)
             try {
@@ -588,7 +642,6 @@ class CameraService : LifecycleService() {
         }
         client.switchCameraTo(lensId) { success, newLensId ->
             Log.i(TAG, "switchCamera result: success=$success lensId=$newLensId")
-            // Push the new active lens to the backend so the web UI reflects it.
             serviceScope.launch {
                 try {
                     signalingClient?.notifyHeartbeat(
@@ -609,6 +662,8 @@ class CameraService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        isStopping = true
+        cancelReconnect()
         stopHeartbeat()
         stopStreaming(keepReady = false)
         runBlocking {

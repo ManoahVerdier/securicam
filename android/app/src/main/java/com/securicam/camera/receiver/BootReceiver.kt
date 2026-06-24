@@ -3,7 +3,6 @@ package com.securicam.camera.receiver
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.os.Build
 import android.util.Log
 import com.securicam.camera.service.CameraService
@@ -17,23 +16,31 @@ class BootReceiver : BroadcastReceiver() {
         private const val KEY_SERVER_URL = "server_url"
         private const val KEY_AUTH_TOKEN = "auth_token"
         private const val KEY_CAMERA_ID = "camera_id"
+        private const val KEY_TURN_HOST = "turn_host"
+        private const val KEY_TURN_USER = "turn_user"
+        private const val KEY_TURN_PASSWORD = "turn_password"
     }
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Intent.ACTION_BOOT_COMPLETED || 
+        if (intent.action == Intent.ACTION_BOOT_COMPLETED ||
             intent.action == "android.intent.action.QUICKBOOT_POWERON") {
-            
+
             Log.d(TAG, "Boot completed, checking auto-start settings")
-            
+
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            
+
             if (prefs.getBoolean(KEY_AUTO_START, false)) {
                 val serverUrl = prefs.getString(KEY_SERVER_URL, "") ?: ""
                 val authToken = prefs.getString(KEY_AUTH_TOKEN, "") ?: ""
                 val cameraId = prefs.getInt(KEY_CAMERA_ID, 0)
-                
+
                 if (serverUrl.isNotEmpty() && authToken.isNotEmpty() && cameraId > 0) {
-                    startCameraService(context, serverUrl, authToken, cameraId)
+                    startCameraService(
+                        context, serverUrl, authToken, cameraId,
+                        turnHost = prefs.getString(KEY_TURN_HOST, "") ?: "",
+                        turnUser = prefs.getString(KEY_TURN_USER, "") ?: "",
+                        turnPassword = prefs.getString(KEY_TURN_PASSWORD, "") ?: ""
+                    )
                 } else {
                     Log.w(TAG, "Missing configuration for auto-start")
                 }
@@ -47,13 +54,19 @@ class BootReceiver : BroadcastReceiver() {
         context: Context,
         serverUrl: String,
         authToken: String,
-        cameraId: Int
+        cameraId: Int,
+        turnHost: String,
+        turnUser: String,
+        turnPassword: String
     ) {
         val serviceIntent = Intent(context, CameraService::class.java).apply {
             action = CameraService.ACTION_PREPARE
             putExtra(CameraService.EXTRA_SERVER_URL, serverUrl)
             putExtra(CameraService.EXTRA_AUTH_TOKEN, authToken)
             putExtra(CameraService.EXTRA_CAMERA_ID, cameraId)
+            putExtra(CameraService.EXTRA_TURN_HOST, turnHost)
+            putExtra(CameraService.EXTRA_TURN_USER, turnUser)
+            putExtra(CameraService.EXTRA_TURN_PASSWORD, turnPassword)
         }
 
         try {
