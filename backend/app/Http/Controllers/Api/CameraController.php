@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Events\CameraOnline;
 use App\Http\Controllers\Controller;
 use App\Models\Camera;
 use Illuminate\Http\JsonResponse;
@@ -182,10 +183,16 @@ class CameraController extends Controller
             'active_lens' => ['sometimes', 'nullable', 'string', 'max:64'],
         ]);
 
+        $wasOffline = $camera->status === Camera::STATUS_OFFLINE;
+
         $update = [
             'last_seen_at' => now(),
-            'last_ip' => $request->ip(),
+            'last_ip'      => $request->ip(),
         ];
+        if ($wasOffline) {
+            $update['status']       = Camera::STATUS_ONLINE;
+            $update['connected_at'] = now();
+        }
         if (array_key_exists('available_lenses', $payload)) {
             $update['available_lenses'] = $payload['available_lenses'];
         }
@@ -193,6 +200,14 @@ class CameraController extends Controller
             $update['active_lens'] = $payload['active_lens'];
         }
         $camera->update($update);
+
+        if ($wasOffline) {
+            try {
+                broadcast(new CameraOnline($camera->id));
+            } catch (\Throwable) {
+                // DB update already committed; broadcast failure is non-fatal
+            }
+        }
 
         return response()->json([
             'camera' => $camera->fresh(),
