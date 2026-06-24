@@ -42,6 +42,8 @@ class SignalingClient(
     private var onStartRecordingCallback: (() -> Unit)? = null
     private var onStopRecordingCallback: (() -> Unit)? = null
     private var onSwitchCameraCallback: ((String?) -> Unit)? = null
+    private var onDisconnectedCallback: (() -> Unit)? = null
+    private var isEstablished: Boolean = false
 
     // -------------------------------------------------------------------------
     // Connection lifecycle
@@ -58,7 +60,8 @@ class SignalingClient(
         onStopRecording: () -> Unit,
         onSwitchCamera: (lensId: String?) -> Unit = {},
         timeoutMs: Long = 10_000L,
-        onError: (String) -> Unit = {}
+        onError: (String) -> Unit = {},
+        onDisconnected: () -> Unit = {}
     ): Boolean {
         onOfferCallback = onOffer
         onAnswerCallback = onAnswer
@@ -69,6 +72,8 @@ class SignalingClient(
         onStartRecordingCallback = onStartRecording
         onStopRecordingCallback = onStopRecording
         onSwitchCameraCallback = onSwitchCamera
+        onDisconnectedCallback = onDisconnected
+        isEstablished = false
         connectionReadyDeferred = CompletableDeferred()
 
         val wsUrl = buildWebSocketUrl()
@@ -110,12 +115,22 @@ class SignalingClient(
 
                 override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
                     Log.e(TAG, "WS failure: ${t.message}", t)
+                    val wasEstablished = isEstablished
                     connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
+                    if (wasEstablished) {
+                        isEstablished = false
+                        onDisconnectedCallback?.invoke()
+                    }
                 }
 
                 override fun onClosed(ws: WebSocket, code: Int, reason: String) {
                     Log.d(TAG, "WS closed: $code - $reason")
+                    val wasEstablished = isEstablished
                     connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
+                    if (wasEstablished) {
+                        isEstablished = false
+                        onDisconnectedCallback?.invoke()
+                    }
                 }
             })
         }
@@ -129,6 +144,8 @@ class SignalingClient(
     }
 
     fun disconnect() {
+        isEstablished = false
+        onDisconnectedCallback = null
         connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(false) }
         connectionReadyDeferred = null
         webSocket?.close(1000, "Client disconnecting")
@@ -193,6 +210,7 @@ class SignalingClient(
                 }
                 EVENT_SUBSCRIPTION_SUCCEEDED_INTERNAL, EVENT_SUBSCRIPTION_SUCCEEDED -> {
                     Log.d(TAG, "Subscribed to camera $cameraId channel")
+                    isEstablished = true
                     connectionReadyDeferred?.let { if (!it.isCompleted) it.complete(true) }
                 }
                 EVENT_PUSHER_ERROR -> {
