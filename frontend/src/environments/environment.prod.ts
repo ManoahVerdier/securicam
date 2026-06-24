@@ -6,7 +6,7 @@ export const environment = {
   apiUrl: 'https://__PUBLIC_HOST__/api',
   wsHost: '__PUBLIC_HOST__',
   wsPort: 443,
-  wsKey: 'securicam-app-key',
+  wsKey: '__REVERB_APP_KEY__',
   wsScheme: 'https',
   iceServers: [
     { urls: 'stun:__TURN_HOST__:3478' },

@@ -30,7 +30,13 @@ import com.securicam.camera.webrtc.PhotoCapturer
 import com.securicam.camera.webrtc.VideoRecorder
 import com.securicam.camera.webrtc.WebRtcClient
 import com.securicam.camera.api.SignalingClient
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
@@ -66,7 +72,7 @@ class CameraService : LifecycleService() {
     private var signalingClient: SignalingClient? = null
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    private var heartbeatJob: Job? = null
+    private lateinit var heartbeatManager: HeartbeatManager
 
     private var serverUrl: String = ""
     private var authToken: String = ""
@@ -131,6 +137,17 @@ class CameraService : LifecycleService() {
         }
     }
 
+    override fun onCreate() {
+        super.onCreate()
+        heartbeatManager = HeartbeatManager(serviceScope) {
+            val activeLens = webRtcClient?.activeLensId ?: LensCatalog.defaultLensId(applicationContext)
+            signalingClient?.notifyHeartbeat(
+                availableLenses = lensCatalogPayload(),
+                activeLens = activeLens
+            )
+        }
+    }
+
     override fun onBind(intent: Intent): IBinder {
         super.onBind(intent)
         return binder
@@ -165,17 +182,7 @@ class CameraService : LifecycleService() {
     }
 
     private fun startHeartbeat() {
-        heartbeatJob?.cancel()
-        heartbeatJob = serviceScope.launch {
-            while (isActive) {
-                delay(HEARTBEAT_INTERVAL_MS)
-                val activeLens = webRtcClient?.activeLensId ?: LensCatalog.defaultLensId(applicationContext)
-                signalingClient?.notifyHeartbeat(
-                    availableLenses = lensCatalogPayload(),
-                    activeLens = activeLens
-                )
-            }
-        }
+        heartbeatManager.start()
     }
 
     private fun lensCatalogPayload(): List<Map<String, String>> =
@@ -189,8 +196,7 @@ class CameraService : LifecycleService() {
         }
 
     private fun stopHeartbeat() {
-        heartbeatJob?.cancel()
-        heartbeatJob = null
+        heartbeatManager.stop()
     }
 
     private fun startForegroundService() {

@@ -85,7 +85,7 @@ class CameraController extends Controller
         $this->authorize('view', $camera);
 
         return response()->json([
-            'camera' => $camera->load('captures'),
+            'camera' => $camera,
         ]);
     }
 
