@@ -8,6 +8,7 @@ use App\Events\WebRtcOffer;
 use App\Events\WebRtcAnswer;
 use App\Events\WebRtcIceCandidate;
 use App\Events\VideoStreamingStart;
+use App\Events\VideoStreamingStop;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -35,6 +36,25 @@ class WebRtcController extends Controller
 
         return response()->json([
             'message' => 'Streaming start requested',
+        ]);
+    }
+
+    /**
+     * Request camera to stop video streaming.
+     */
+    public function stop(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'camera_id' => ['required', 'exists:cameras,id'],
+        ]);
+
+        $camera = Camera::findOrFail($validated['camera_id']);
+        $this->authorize('update', $camera);
+
+        broadcast(new VideoStreamingStop($camera->id))->toOthers();
+
+        return response()->json([
+            'message' => 'Streaming stop requested',
         ]);
     }
 

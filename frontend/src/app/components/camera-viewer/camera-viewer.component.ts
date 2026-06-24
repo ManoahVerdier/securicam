@@ -64,8 +64,12 @@ export class CameraViewerComponent implements OnInit, OnChanges, OnDestroy, Afte
 
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['camera'] && !changes['camera'].firstChange) {
-      this.disconnect();
-      setTimeout(() => this.connect(), 100);
+      const previousId = changes['camera'].previousValue?.id;
+      const currentId = changes['camera'].currentValue?.id;
+      if (previousId !== currentId) {
+        this.disconnect();
+        setTimeout(() => this.connect(), 100);
+      }
     }
   }
 

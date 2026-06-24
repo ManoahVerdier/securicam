@@ -139,6 +139,12 @@ export class WebrtcService implements OnDestroy {
     }
   }
 
+  requestStreamStop(cameraId: number): void {
+    this.http.post(`${environment.apiUrl}/webrtc/stop`, { camera_id: cameraId }).subscribe({
+      error: (error) => console.error(`[WebRTC] Stream stop request failed for camera ${cameraId}`, error)
+    });
+  }
+
   private async requestStreamStart(cameraId: number): Promise<void> {
     console.info(`[WebRTC] Requesting stream start for camera ${cameraId}`);
     try {

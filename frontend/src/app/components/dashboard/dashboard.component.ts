@@ -1,9 +1,10 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, OnDestroy, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
 import { Subscription } from 'rxjs';
 import { Camera } from '../../models';
 import { AuthService, CameraService, SignalingService } from '../../services';
+import { WebrtcService } from '../../services';
 import { CameraViewerComponent } from '../camera-viewer/camera-viewer.component';
 import { CaptureControlsComponent } from '../capture-controls/capture-controls.component';
 import { GalleryComponent } from '../gallery/gallery.component';
@@ -36,6 +37,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     private authService: AuthService,
     private cameraService: CameraService,
     private signalingService: SignalingService,
+    private webrtcService: WebrtcService,
     private router: Router
   ) {}
 
@@ -151,7 +153,17 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.viewMode = 'info';
   }
 
+  @HostListener('window:beforeunload')
+  onBeforeUnload(): void {
+    if (this.viewMode === 'stream' && this.selectedCamera) {
+      this.webrtcService.requestStreamStop(this.selectedCamera.id);
+    }
+  }
+
   stopStreaming(): void {
+    if (this.selectedCamera) {
+      this.webrtcService.requestStreamStop(this.selectedCamera.id);
+    }
     this.viewMode = 'info';
   }
 
