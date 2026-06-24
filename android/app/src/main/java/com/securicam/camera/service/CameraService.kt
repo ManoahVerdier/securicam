@@ -31,6 +31,7 @@ import com.securicam.camera.webrtc.PhotoCapturer
 import com.securicam.camera.webrtc.VideoRecorder
 import com.securicam.camera.webrtc.WebRtcClient
 import com.securicam.camera.api.SignalingClient
+import org.webrtc.PeerConnection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -65,6 +66,10 @@ class CameraService : LifecycleService() {
         private const val RENEGOTIATION_DEBOUNCE_MS = 1500L
         private const val HEARTBEAT_INTERVAL_MS = 30_000L
 
+        // Grace period before tearing down the camera after a transient ICE
+        // DISCONNECTED, so a brief mobile-network blip doesn't kill a live stream.
+        private const val CONNECTION_LOSS_GRACE_MS = 10_000L
+
         private const val PREFS_NAME = "securicam_prefs"
         private const val KEY_SERVER_URL = "server_url"
         private const val KEY_AUTH_TOKEN = "auth_token"
@@ -86,6 +91,7 @@ class CameraService : LifecycleService() {
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private lateinit var heartbeatManager: HeartbeatManager
     private var reconnectJob: Job? = null
+    private var connectionLossJob: Job? = null
     private var reconnectAttempts: Int = 0
     private var isStopping: Boolean = false
 
@@ -475,14 +481,29 @@ class CameraService : LifecycleService() {
                 val iceServers = WebRtcClient.buildIceServers(turnHost, turnUser, turnPassword)
                 webRtcClient = WebRtcClient(applicationContext, cameraProvider!!, this@CameraService, iceServers)
 
-                webRtcClient?.setConnectionStateCallback { connected ->
-                    if (connected && !isStreaming) {
-                        isStreaming = true
-                        isStreamStarting = false
-                        serviceScope.launch { updateStatus("streaming") }
-                    } else if (!connected && isStreaming) {
-                        isStreaming = false
-                        serviceScope.launch { updateStatus("online") }
+                webRtcClient?.setConnectionStateCallback { state ->
+                    when (state) {
+                        PeerConnection.IceConnectionState.CONNECTED,
+                        PeerConnection.IceConnectionState.COMPLETED -> {
+                            cancelConnectionLoss()
+                            if (!isStreaming) {
+                                isStreaming = true
+                                isStreamStarting = false
+                                serviceScope.launch { updateStatus("streaming") }
+                            }
+                        }
+                        PeerConnection.IceConnectionState.DISCONNECTED -> {
+                            // Often transient on mobile — give ICE a chance to recover
+                            // before tearing the camera down.
+                            if (isStreaming) scheduleConnectionLossTeardown()
+                        }
+                        PeerConnection.IceConnectionState.FAILED -> {
+                            // Terminal: the viewer is gone. Release the camera/encoder now
+                            // so the sensor stops capturing (heat + battery drain).
+                            cancelConnectionLoss()
+                            if (isStreaming) stopStreaming(keepReady = true)
+                        }
+                        else -> {}
                     }
                 }
 
@@ -506,7 +527,25 @@ class CameraService : LifecycleService() {
         }
     }
 
+    private fun scheduleConnectionLossTeardown() {
+        if (connectionLossJob != null) return
+        connectionLossJob = serviceScope.launch {
+            delay(CONNECTION_LOSS_GRACE_MS)
+            connectionLossJob = null
+            if (isStreaming) {
+                Log.i(TAG, "ICE still disconnected after grace — releasing camera to stop battery drain")
+                stopStreaming(keepReady = true)
+            }
+        }
+    }
+
+    private fun cancelConnectionLoss() {
+        connectionLossJob?.cancel()
+        connectionLossJob = null
+    }
+
     private fun stopStreaming(keepReady: Boolean) {
+        cancelConnectionLoss()
         serviceScope.launch {
             isStreaming = false
             isStreamStarting = false

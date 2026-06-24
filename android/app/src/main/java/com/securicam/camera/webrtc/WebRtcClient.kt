@@ -62,7 +62,7 @@ class WebRtcClient(
     private var eglBase: EglBase? = null
 
     private var iceCandidateCallback: ((IceCandidate) -> Unit)? = null
-    private var connectionStateCallback: ((Boolean) -> Unit)? = null
+    private var connectionStateCallback: ((PeerConnection.IceConnectionState) -> Unit)? = null
     private val executor = Executors.newSingleThreadExecutor()
 
     /** True when the active capturer is currently aimed at the front-facing lens. */
@@ -322,16 +322,7 @@ class WebRtcClient(
 
         override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
             Log.d(TAG, "onIceConnectionChange: $state")
-            when (state) {
-                PeerConnection.IceConnectionState.CONNECTED,
-                PeerConnection.IceConnectionState.COMPLETED ->
-                    connectionStateCallback?.invoke(true)
-                PeerConnection.IceConnectionState.DISCONNECTED,
-                PeerConnection.IceConnectionState.FAILED,
-                PeerConnection.IceConnectionState.CLOSED ->
-                    connectionStateCallback?.invoke(false)
-                else -> {}
-            }
+            state?.let { connectionStateCallback?.invoke(it) }
         }
 
         override fun onIceConnectionReceivingChange(receiving: Boolean) {
@@ -470,7 +461,7 @@ class WebRtcClient(
         iceCandidateCallback = callback
     }
 
-    fun setConnectionStateCallback(callback: (Boolean) -> Unit) {
+    fun setConnectionStateCallback(callback: (PeerConnection.IceConnectionState) -> Unit) {
         connectionStateCallback = callback
     }
 
