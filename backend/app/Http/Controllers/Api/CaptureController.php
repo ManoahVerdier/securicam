@@ -186,7 +186,7 @@ class CaptureController extends Controller
             );
         } elseif ($validated['type'] === 'photo') {
             $thumbnailPath = $this->generatePhotoThumbnail(
-                $request->file('file')->getRealPath(),
+                Storage::disk('public')->path($filePath),
                 "captures/{$camera->id}/thumbnails"
             );
         }

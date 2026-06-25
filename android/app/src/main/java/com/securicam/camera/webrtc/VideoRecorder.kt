@@ -30,7 +30,7 @@ import kotlin.concurrent.thread
 class VideoRecorder(
     private val sharedContext: EglBase.Context,
     private val outputFile: File,
-    private val bitrateBps: Int = 6_000_000,
+    private val bitrateBps: Int = 10_000_000,
     private val frameRate: Int = 30,
     private val onCompleted: (success: Boolean, file: File, durationMs: Long) -> Unit
 ) : VideoSink {
