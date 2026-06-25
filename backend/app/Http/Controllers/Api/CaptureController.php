@@ -6,6 +6,11 @@ use App\Http\Controllers\Controller;
 use App\Models\Camera;
 use App\Models\Capture;
 use App\Events\CapturePhoto;
+use App\Events\CapturePhotoHd;
+use App\Events\CaptureBurstClassic;
+use App\Events\CaptureContinuousStartClassic;
+use App\Events\CaptureContinuousStartHd;
+use App\Events\CaptureContinuousStop;
 use App\Events\CaptureCreated;
 use App\Events\SwitchCamera;
 use App\Events\VideoRecordingStart;
@@ -127,6 +132,90 @@ class CaptureController extends Controller
             'message' => 'Video recording stopped',
             'camera' => $camera,
         ]);
+    }
+
+    /**
+     * Trigger a high-definition photo capture on the camera.
+     */
+    public function triggerPhotoHd(Request $request): JsonResponse
+    {
+        $validated = $request->validate(['camera_id' => ['required', 'exists:cameras,id']]);
+        $camera = Camera::findOrFail($validated['camera_id']);
+        $this->authorize('update', $camera);
+
+        if (!$camera->isOnline()) {
+            return response()->json(['message' => 'Camera is offline'], 422);
+        }
+
+        broadcast(new CapturePhotoHd($camera->id))->toOthers();
+        return response()->json(['message' => 'HD photo capture triggered']);
+    }
+
+    /**
+     * Trigger a burst of classic-quality photos.
+     */
+    public function triggerBurstClassic(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'camera_id' => ['required', 'exists:cameras,id'],
+            'count'     => ['sometimes', 'integer', 'min:1', 'max:200'],
+        ]);
+        $camera = Camera::findOrFail($validated['camera_id']);
+        $this->authorize('update', $camera);
+
+        if (!$camera->isOnline()) {
+            return response()->json(['message' => 'Camera is offline'], 422);
+        }
+
+        broadcast(new CaptureBurstClassic($camera->id, $validated['count'] ?? 100))->toOthers();
+        return response()->json(['message' => 'Burst capture triggered']);
+    }
+
+    /**
+     * Start continuous classic-quality photo capture (photos uploaded to server).
+     */
+    public function triggerContinuousStartClassic(Request $request): JsonResponse
+    {
+        $validated = $request->validate(['camera_id' => ['required', 'exists:cameras,id']]);
+        $camera = Camera::findOrFail($validated['camera_id']);
+        $this->authorize('update', $camera);
+
+        if (!$camera->isOnline()) {
+            return response()->json(['message' => 'Camera is offline'], 422);
+        }
+
+        broadcast(new CaptureContinuousStartClassic($camera->id))->toOthers();
+        return response()->json(['message' => 'Continuous classic capture started']);
+    }
+
+    /**
+     * Start continuous HD photo capture (photos saved on device DCIM).
+     */
+    public function triggerContinuousStartHd(Request $request): JsonResponse
+    {
+        $validated = $request->validate(['camera_id' => ['required', 'exists:cameras,id']]);
+        $camera = Camera::findOrFail($validated['camera_id']);
+        $this->authorize('update', $camera);
+
+        if (!$camera->isOnline()) {
+            return response()->json(['message' => 'Camera is offline'], 422);
+        }
+
+        broadcast(new CaptureContinuousStartHd($camera->id))->toOthers();
+        return response()->json(['message' => 'Continuous HD capture started']);
+    }
+
+    /**
+     * Stop any ongoing continuous capture.
+     */
+    public function triggerContinuousStop(Request $request): JsonResponse
+    {
+        $validated = $request->validate(['camera_id' => ['required', 'exists:cameras,id']]);
+        $camera = Camera::findOrFail($validated['camera_id']);
+        $this->authorize('update', $camera);
+
+        broadcast(new CaptureContinuousStop($camera->id))->toOthers();
+        return response()->json(['message' => 'Continuous capture stopped']);
     }
 
     /**

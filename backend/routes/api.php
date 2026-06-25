@@ -55,6 +55,11 @@ Route::middleware('auth:sanctum')->group(function () {
     // Captures
     Route::prefix('captures')->group(function () {
         Route::post('/photo', [CaptureController::class, 'triggerPhoto']);
+        Route::post('/photo/hd', [CaptureController::class, 'triggerPhotoHd']);
+        Route::post('/burst', [CaptureController::class, 'triggerBurstClassic']);
+        Route::post('/continuous/start-classic', [CaptureController::class, 'triggerContinuousStartClassic']);
+        Route::post('/continuous/start-hd', [CaptureController::class, 'triggerContinuousStartHd']);
+        Route::post('/continuous/stop', [CaptureController::class, 'triggerContinuousStop']);
         Route::post('/video/start', [CaptureController::class, 'startVideo']);
         Route::post('/video/stop', [CaptureController::class, 'stopVideo']);
         Route::post('/upload', [CaptureController::class, 'store']);

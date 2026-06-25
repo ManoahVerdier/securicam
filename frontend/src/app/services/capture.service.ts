@@ -63,6 +63,26 @@ export class CaptureService {
     return this.http.post<{ message: string; camera: any }>(`${this.apiUrl}/captures/video/stop`, data);
   }
 
+  triggerPhotoHd(cameraId: number): Observable<{ message: string }> {
+    return this.http.post<{ message: string }>(`${this.apiUrl}/captures/photo/hd`, { camera_id: cameraId });
+  }
+
+  triggerBurst(cameraId: number, count: number = 100): Observable<{ message: string }> {
+    return this.http.post<{ message: string }>(`${this.apiUrl}/captures/burst`, { camera_id: cameraId, count });
+  }
+
+  startContinuousClassic(cameraId: number): Observable<{ message: string }> {
+    return this.http.post<{ message: string }>(`${this.apiUrl}/captures/continuous/start-classic`, { camera_id: cameraId });
+  }
+
+  startContinuousHd(cameraId: number): Observable<{ message: string }> {
+    return this.http.post<{ message: string }>(`${this.apiUrl}/captures/continuous/start-hd`, { camera_id: cameraId });
+  }
+
+  stopContinuous(cameraId: number): Observable<{ message: string }> {
+    return this.http.post<{ message: string }>(`${this.apiUrl}/captures/continuous/stop`, { camera_id: cameraId });
+  }
+
   switchPhoneCamera(cameraId: number, lensId?: string): Observable<{ message: string }> {
     const data: TriggerCaptureRequest & { lens_id?: string } = { camera_id: cameraId };
     if (lensId) {

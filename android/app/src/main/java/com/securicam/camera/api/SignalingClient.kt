@@ -37,6 +37,11 @@ class SignalingClient(
     private var onAnswerCallback: ((String) -> Unit)? = null
     private var onIceCandidateCallback: ((String) -> Unit)? = null
     private var onCapturePhotoCallback: (() -> Unit)? = null
+    private var onCapturePhotoHdCallback: (() -> Unit)? = null
+    private var onCaptureBurstClassicCallback: ((count: Int) -> Unit)? = null
+    private var onContinuousStartClassicCallback: (() -> Unit)? = null
+    private var onContinuousStartHdCallback: (() -> Unit)? = null
+    private var onContinuousStopCallback: (() -> Unit)? = null
     private var onStartStreamingCallback: (() -> Unit)? = null
     private var onStopStreamingCallback: (() -> Unit)? = null
     private var onStartRecordingCallback: (() -> Unit)? = null
@@ -54,6 +59,11 @@ class SignalingClient(
         onAnswer: (String) -> Unit,
         onIceCandidate: (String) -> Unit,
         onCapturePhoto: () -> Unit,
+        onCapturePhotoHd: () -> Unit = {},
+        onCaptureBurstClassic: (count: Int) -> Unit = {},
+        onContinuousStartClassic: () -> Unit = {},
+        onContinuousStartHd: () -> Unit = {},
+        onContinuousStop: () -> Unit = {},
         onStartStreaming: () -> Unit,
         onStopStreaming: () -> Unit,
         onStartRecording: () -> Unit,
@@ -67,6 +77,11 @@ class SignalingClient(
         onAnswerCallback = onAnswer
         onIceCandidateCallback = onIceCandidate
         onCapturePhotoCallback = onCapturePhoto
+        onCapturePhotoHdCallback = onCapturePhotoHd
+        onCaptureBurstClassicCallback = onCaptureBurstClassic
+        onContinuousStartClassicCallback = onContinuousStartClassic
+        onContinuousStartHdCallback = onContinuousStartHd
+        onContinuousStopCallback = onContinuousStop
         onStartStreamingCallback = onStartStreaming
         onStopStreamingCallback = onStopStreaming
         onStartRecordingCallback = onStartRecording
@@ -221,6 +236,14 @@ class SignalingClient(
                 "webrtc.answer" -> data?.get("sdp")?.asString?.let { onAnswerCallback?.invoke(it) }
                 "webrtc.ice-candidate" -> data?.get("candidate")?.toString()?.let { onIceCandidateCallback?.invoke(it) }
                 "capture.photo" -> onCapturePhotoCallback?.invoke()
+                "capture.photo.hd" -> onCapturePhotoHdCallback?.invoke()
+                "capture.burst.classic" -> {
+                    val count = data?.get("count")?.asInt ?: 100
+                    onCaptureBurstClassicCallback?.invoke(count)
+                }
+                "capture.continuous.start.classic" -> onContinuousStartClassicCallback?.invoke()
+                "capture.continuous.start.hd" -> onContinuousStartHdCallback?.invoke()
+                "capture.continuous.stop" -> onContinuousStopCallback?.invoke()
                 "video.streaming.start" -> onStartStreamingCallback?.invoke()
                 "video.streaming.stop" -> onStopStreamingCallback?.invoke()
                 "video.recording.start" -> onStartRecordingCallback?.invoke()

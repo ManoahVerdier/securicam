@@ -1,10 +1,10 @@
 .capture-controls {
   display: flex;
-  gap: 12px;
+  gap: 16px;
   padding: 16px;
   background: #1a1a2e;
   border-radius: 8px;
-  align-items: center;
+  align-items: flex-start;
   flex-wrap: wrap;
 
   &.disabled {
@@ -71,6 +71,43 @@
       }
     }
 
+    &.btn-hd {
+      background: #7b4fd4;
+
+      &:hover:not(:disabled) {
+        background: #6a3ec0;
+      }
+    }
+
+    &.btn-burst {
+      background: #e67e22;
+      color: #fff;
+
+      &:hover:not(:disabled) {
+        background: #d35400;
+      }
+    }
+
+    &.btn-continuous {
+      background: #2d2d44;
+      color: #fff;
+      border: 2px solid #4a4a6a;
+
+      &:hover:not(:disabled) {
+        background: #3d3d5c;
+      }
+
+      &.active {
+        background: #27ae60;
+        border-color: #27ae60;
+        animation: pulse-border-green 1.5s ease-in-out infinite;
+
+        &:hover:not(:disabled) {
+          background: #219a52;
+        }
+      }
+    }
+
     &.btn-lens {
       background: #2d2d44;
       color: #fff;
@@ -86,6 +123,26 @@
         background: #4a90d9;
         border-color: #4a90d9;
       }
+    }
+  }
+
+  .control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+
+    .group-label {
+      color: #888;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding-left: 2px;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 8px;
     }
   }
 
@@ -107,6 +164,11 @@
     color: #888;
     font-size: 13px;
   }
+}
+
+@keyframes pulse-border-green {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(39, 174, 96, 0.4); }
+  50%       { box-shadow: 0 0 0 8px rgba(39, 174, 96, 0); }
 }
 
 @keyframes pulse-border {

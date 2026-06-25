@@ -11,6 +11,8 @@ import android.content.pm.ServiceInfo
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.provider.MediaStore
+import android.content.ContentValues
 import android.util.Log
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
@@ -26,7 +28,9 @@ import androidx.lifecycle.LifecycleService
 import com.securicam.camera.R
 import com.securicam.camera.SecuricamApp
 import com.securicam.camera.ui.MainActivity
+import com.securicam.camera.webrtc.BurstPhotoCapturer
 import com.securicam.camera.webrtc.LensCatalog
+import com.securicam.camera.webrtc.PhotoCapturer
 import com.securicam.camera.webrtc.VideoRecorder
 import com.securicam.camera.webrtc.WebRtcClient
 import com.securicam.camera.api.SignalingClient
@@ -105,6 +109,8 @@ class CameraService : LifecycleService() {
     private var lastRenegotiationAt: Long = 0L
     private var activeRecorder: VideoRecorder? = null
     private var isCapturingPhoto: Boolean = false
+    private var activeBurstCapturer: BurstPhotoCapturer? = null
+    private var continuousJob: Job? = null
 
     var isStreaming: Boolean = false
         private set
@@ -362,7 +368,22 @@ class CameraService : LifecycleService() {
                     webRtcClient?.addIceCandidate(candidate)
                 },
                 onCapturePhoto = {
-                    capturePhoto()
+                    capturePhotoClassic()
+                },
+                onCapturePhotoHd = {
+                    capturePhotoHD()
+                },
+                onCaptureBurstClassic = { count ->
+                    startBurstClassic(count)
+                },
+                onContinuousStartClassic = {
+                    startContinuousClassic()
+                },
+                onContinuousStartHd = {
+                    startContinuousHD()
+                },
+                onContinuousStop = {
+                    stopContinuous()
                 },
                 onStartStreaming = {
                     startStreamingIfNeeded()
@@ -564,39 +585,204 @@ class CameraService : LifecycleService() {
         signalingClient?.updateCameraStatus(status)
     }
 
-    private fun capturePhoto() {
-        Log.d(TAG, "Capturing photo (full-resolution via ImageCapture)...")
-        val client = webRtcClient ?: run {
-            Log.w(TAG, "capturePhoto: WebRTC client not initialized; ignoring")
-            return
-        }
-        if (isCapturingPhoto) {
-            Log.d(TAG, "capturePhoto: already in progress")
-            return
-        }
+    private fun capturePhotoClassic() {
+        Log.d(TAG, "Capturing classic photo (WebRTC frame)...")
+        val client = webRtcClient ?: run { Log.w(TAG, "capturePhotoClassic: no WebRTC client"); return }
+        if (isCapturingPhoto) { Log.d(TAG, "capturePhotoClassic: already in progress"); return }
         isCapturingPhoto = true
 
         val outDir = File(filesDir, "captures").apply { mkdirs() }
         val photoFile = File(outDir, "photo_${System.currentTimeMillis()}.jpg")
+
+        val capturer = PhotoCapturer(
+            onPhoto = { jpegBytes, _, _ ->
+                serviceScope.launch {
+                    try {
+                        photoFile.writeBytes(jpegBytes)
+                        val ok = signalingClient?.uploadCapture(type = "photo", file = photoFile) ?: false
+                        Log.i(TAG, "Classic photo upload ${if (ok) "OK" else "FAILED"} (${photoFile.length()} bytes)")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to save/upload classic photo", e)
+                    } finally {
+                        photoFile.delete()
+                        isCapturingPhoto = false
+                    }
+                }
+            },
+            onError = { error ->
+                Log.e(TAG, "Classic photo capture error", error)
+                isCapturingPhoto = false
+            }
+        )
+        client.addVideoSink(capturer)
+    }
+
+    private fun capturePhotoHD() {
+        Log.d(TAG, "Capturing HD photo (CameraX ImageCapture)...")
+        val client = webRtcClient ?: run { Log.w(TAG, "capturePhotoHD: no WebRTC client"); return }
+        if (isCapturingPhoto) { Log.d(TAG, "capturePhotoHD: already in progress"); return }
+        isCapturingPhoto = true
+
+        val outDir = File(filesDir, "captures").apply { mkdirs() }
+        val photoFile = File(outDir, "photo_hd_${System.currentTimeMillis()}.jpg")
 
         client.takePicture(photoFile) { success ->
             serviceScope.launch {
                 isCapturingPhoto = false
                 if (success && photoFile.exists() && photoFile.length() > 0) {
                     try {
-                        val ok = signalingClient?.uploadCapture(
-                            type = "photo",
-                            file = photoFile
-                        ) ?: false
-                        Log.i(TAG, "Photo upload ${if (ok) "OK" else "FAILED"} (${photoFile.length()} bytes)")
+                        val ok = signalingClient?.uploadCapture(type = "photo", file = photoFile) ?: false
+                        Log.i(TAG, "HD photo upload ${if (ok) "OK" else "FAILED"} (${photoFile.length()} bytes)")
                     } catch (e: Exception) {
-                        Log.e(TAG, "Failed to upload photo", e)
+                        Log.e(TAG, "Failed to upload HD photo", e)
                     }
                 } else {
-                    Log.w(TAG, "Still capture failed or produced empty file")
+                    Log.w(TAG, "HD capture failed or empty file")
                 }
                 photoFile.delete()
             }
+        }
+    }
+
+    private fun startBurstClassic(count: Int) {
+        Log.d(TAG, "Starting burst classic ($count photos)...")
+        val client = webRtcClient ?: run { Log.w(TAG, "startBurstClassic: no WebRTC client"); return }
+        if (activeBurstCapturer != null) { Log.d(TAG, "startBurstClassic: burst already active"); return }
+
+        val outDir = File(filesDir, "captures").apply { mkdirs() }
+        var uploadedCount = 0
+
+        val burstCapturer = BurstPhotoCapturer(
+            totalCount = count,
+            onEachPhoto = { jpegBytes, index ->
+                serviceScope.launch {
+                    val photoFile = File(outDir, "burst_${System.currentTimeMillis()}_${index}.jpg")
+                    try {
+                        photoFile.writeBytes(jpegBytes)
+                        val ok = signalingClient?.uploadCapture(type = "photo", file = photoFile) ?: false
+                        if (ok) uploadedCount++
+                        Log.d(TAG, "Burst frame $index upload ${if (ok) "OK" else "FAILED"}")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Burst frame $index upload error", e)
+                    } finally {
+                        photoFile.delete()
+                    }
+                }
+            },
+            onComplete = {
+                serviceScope.launch {
+                    Log.i(TAG, "Burst complete: $uploadedCount/$count uploaded")
+                    activeBurstCapturer?.let { client.removeVideoSink(it) }
+                    activeBurstCapturer = null
+                }
+            }
+        )
+
+        activeBurstCapturer = burstCapturer
+        client.addVideoSink(burstCapturer)
+    }
+
+    private fun startContinuousClassic() {
+        Log.d(TAG, "Starting continuous classic capture...")
+        if (continuousJob?.isActive == true) { Log.d(TAG, "startContinuousClassic: already active"); return }
+
+        continuousJob = serviceScope.launch {
+            var count = 0
+            while (isActive) {
+                val client = webRtcClient
+                if (client == null) { delay(1000); continue }
+
+                val outDir = File(filesDir, "captures").apply { mkdirs() }
+                val photoFile = File(outDir, "cont_${System.currentTimeMillis()}.jpg")
+
+                val latch = java.util.concurrent.CountDownLatch(1)
+                val photoCapturer = PhotoCapturer(
+                    onPhoto = { jpegBytes, _, _ ->
+                        serviceScope.launch {
+                            try {
+                                photoFile.writeBytes(jpegBytes)
+                                signalingClient?.uploadCapture(type = "photo", file = photoFile)
+                                count++
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Continuous classic upload error", e)
+                            } finally {
+                                photoFile.delete()
+                                latch.countDown()
+                            }
+                        }
+                    },
+                    onError = { latch.countDown() }
+                )
+                client.addVideoSink(photoCapturer)
+                // Wait for the frame to be captured before taking the next one
+                kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    latch.await(3, java.util.concurrent.TimeUnit.SECONDS)
+                }
+                client.removeVideoSink(photoCapturer)
+                delay(200)
+            }
+            Log.i(TAG, "Continuous classic stopped after $count photos")
+        }
+    }
+
+    private fun startContinuousHD() {
+        Log.d(TAG, "Starting continuous HD capture (saved to DCIM)...")
+        if (continuousJob?.isActive == true) { Log.d(TAG, "startContinuousHD: already active"); return }
+
+        continuousJob = serviceScope.launch {
+            var count = 0
+            while (isActive) {
+                val client = webRtcClient
+                if (client == null) { delay(1000); continue }
+
+                val tempFile = File(filesDir, "captures/cont_hd_${System.currentTimeMillis()}.jpg")
+                    .also { it.parentFile?.mkdirs() }
+
+                var success = false
+                val latch = java.util.concurrent.CountDownLatch(1)
+                client.takePicture(tempFile) { ok ->
+                    success = ok
+                    latch.countDown()
+                }
+                kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    latch.await(5, java.util.concurrent.TimeUnit.SECONDS)
+                }
+
+                if (success && tempFile.exists() && tempFile.length() > 0) {
+                    saveToDcim(tempFile, "securicam_hd_${System.currentTimeMillis()}.jpg")
+                    count++
+                }
+                tempFile.delete()
+                // Small gap between HD shots to let the sensor stabilize
+                delay(500)
+            }
+            Log.i(TAG, "Continuous HD stopped after $count photos")
+        }
+    }
+
+    private fun stopContinuous() {
+        Log.d(TAG, "Stopping continuous capture")
+        continuousJob?.cancel()
+        continuousJob = null
+    }
+
+    private fun saveToDcim(sourceFile: File, displayName: String) {
+        try {
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.RELATIVE_PATH, "DCIM/Securicam")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            val resolver = contentResolver
+            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return
+            resolver.openOutputStream(uri)?.use { out -> sourceFile.inputStream().use { it.copyTo(out) } }
+            values.clear()
+            values.put(MediaStore.Images.Media.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+            Log.d(TAG, "Saved to DCIM/Securicam/$displayName")
+        } catch (e: Exception) {
+            Log.e(TAG, "saveToDcim failed", e)
         }
     }
 

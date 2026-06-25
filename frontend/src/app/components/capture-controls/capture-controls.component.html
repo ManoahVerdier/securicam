@@ -1,43 +1,107 @@
 <div class="capture-controls" [class.disabled]="!isOnline">
-  <button
-    class="btn btn-photo"
-    (click)="capturePhoto()"
-    [disabled]="!isOnline || isCapturingPhoto"
-    title="Capturer une photo"
-  >
-    <span class="icon">📷</span>
-    <span class="label" *ngIf="!isCapturingPhoto">Photo</span>
-    <span class="label" *ngIf="isCapturingPhoto">Capture...</span>
-  </button>
 
-  <button
-    class="btn btn-record"
-    [class.recording]="isRecording"
-    (click)="toggleRecording()"
-    [disabled]="!isOnline || isTogglingRecord"
-    title="{{ isRecording ? 'Arrêter l\'enregistrement' : 'Démarrer l\'enregistrement' }}"
-  >
-    <span class="icon" *ngIf="!isRecording">⏺️</span>
-    <span class="icon" *ngIf="isRecording">⏹️</span>
-    <span class="label" *ngIf="!isTogglingRecord && !isRecording">Enregistrer</span>
-    <span class="label" *ngIf="!isTogglingRecord && isRecording">Arrêter</span>
-    <span class="label" *ngIf="isTogglingRecord">...</span>
-  </button>
+  <!-- ── Photo ─────────────────────────────────────────────────────────── -->
+  <div class="control-group">
+    <span class="group-label">Photo</span>
+    <div class="btn-row">
+      <button
+        class="btn btn-photo"
+        (click)="capturePhoto()"
+        [disabled]="!isOnline || isCapturingPhoto"
+        title="Photo classique (1080p, sans pause stream)"
+      >
+        <span class="icon">📷</span>
+        <span class="label">{{ isCapturingPhoto ? '...' : 'Classique' }}</span>
+      </button>
 
-  <!-- Simple front/back toggle when only the two facings are available. -->
+      <button
+        class="btn btn-photo btn-hd"
+        (click)="capturePhotoHd()"
+        [disabled]="!isOnline || isCapturingPhotoHd || isRecording"
+        [title]="isRecording ? 'Indisponible pendant un enregistrement' : 'Photo HD (pleine résolution capteur, pause ~1s)'"
+      >
+        <span class="icon">📸</span>
+        <span class="label">{{ isCapturingPhotoHd ? '...' : 'HD' }}</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Rafale ─────────────────────────────────────────────────────────── -->
+  <div class="control-group">
+    <span class="group-label">Rafale 100</span>
+    <div class="btn-row">
+      <button
+        class="btn btn-burst"
+        (click)="triggerBurst()"
+        [disabled]="!isOnline || isBursting"
+        title="100 photos classiques en rafale (~3s, sans pause stream)"
+      >
+        <span class="icon">⚡</span>
+        <span class="label">{{ isBursting ? 'Rafale...' : 'Lancer' }}</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Continu ─────────────────────────────────────────────────────────── -->
+  <div class="control-group">
+    <span class="group-label">Continu</span>
+    <div class="btn-row">
+      <button
+        class="btn btn-continuous"
+        [class.active]="isContinuousClassicActive"
+        (click)="toggleContinuousClassic()"
+        [disabled]="!isOnline || isContinuousHdActive"
+        title="Mode continu classique — photos uploadées sur le serveur"
+      >
+        <span class="icon">{{ isContinuousClassicActive ? '⏹️' : '🔁' }}</span>
+        <span class="label">{{ isContinuousClassicActive ? 'Arrêter' : 'Classique' }}</span>
+      </button>
+
+      <button
+        class="btn btn-continuous btn-hd"
+        [class.active]="isContinuousHdActive"
+        (click)="toggleContinuousHd()"
+        [disabled]="!isOnline || isContinuousClassicActive"
+        title="Mode continu HD — photos sauvegardées sur le téléphone (DCIM/Securicam), stream suspendu"
+      >
+        <span class="icon">{{ isContinuousHdActive ? '⏹️' : '🔁' }}</span>
+        <span class="label">{{ isContinuousHdActive ? 'Arrêter' : 'HD (DCIM)' }}</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Enregistrement ─────────────────────────────────────────────────── -->
+  <div class="control-group">
+    <span class="group-label">Vidéo</span>
+    <div class="btn-row">
+      <button
+        class="btn btn-record"
+        [class.recording]="isRecording"
+        (click)="toggleRecording()"
+        [disabled]="!isOnline || isTogglingRecord"
+        title="{{ isRecording ? 'Arrêter l\'enregistrement' : 'Démarrer l\'enregistrement' }}"
+      >
+        <span class="icon" *ngIf="!isRecording">⏺️</span>
+        <span class="icon" *ngIf="isRecording">⏹️</span>
+        <span class="label" *ngIf="!isTogglingRecord && !isRecording">Enregistrer</span>
+        <span class="label" *ngIf="!isTogglingRecord && isRecording">Arrêter</span>
+        <span class="label" *ngIf="isTogglingRecord">...</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Objectif ───────────────────────────────────────────────────────── -->
   <button
     *ngIf="!hasLensChoice"
     class="btn btn-switch"
     (click)="switchPhoneCamera()"
     [disabled]="!isOnline || isSwitchingCamera"
-    title="Basculer entre caméra avant et arrière du téléphone"
+    title="Basculer avant/arrière"
   >
     <span class="icon">🔄</span>
-    <span class="label" *ngIf="!isSwitchingCamera">Avant/Arrière</span>
-    <span class="label" *ngIf="isSwitchingCamera">...</span>
+    <span class="label">{{ isSwitchingCamera ? '...' : 'Avant/Arrière' }}</span>
   </button>
 
-  <!-- Multi-lens picker (e.g. wide / ultrawide / telephoto on the back). -->
   <div class="lens-picker" *ngIf="hasLensChoice">
     <span class="lens-picker-label">Objectif :</span>
     <button
@@ -48,7 +112,7 @@
       (click)="switchPhoneCamera(lens.id)"
       [title]="lens.label"
     >
-      <span class="icon">{{ lens.facing === 'front' ? '🤳' : lens.facing === 'back' ? '📷' : '🎥' }}</span>
+      <span class="icon">{{ lens.facing === 'front' ? '🤳' : '📷' }}</span>
       <span class="label">
         <ng-container *ngIf="switchingToLens !== lens.id">{{ lens.label }}</ng-container>
         <ng-container *ngIf="switchingToLens === lens.id">...</ng-container>
@@ -56,7 +120,5 @@
     </button>
   </div>
 
-  <div class="status-message" *ngIf="!isOnline">
-    Caméra hors ligne
-  </div>
+  <div class="status-message" *ngIf="!isOnline">Caméra hors ligne</div>
 </div>
