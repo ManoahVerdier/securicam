@@ -1,11 +1,17 @@
 package com.securicam.camera.webrtc
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.lifecycle.LifecycleOwner
 import com.google.gson.JsonParser
 import org.webrtc.*
+import java.io.File
 import java.util.concurrent.Executors
 
 class WebRtcClient(
@@ -279,6 +285,73 @@ class WebRtcClient(
             localVideoTrack?.addSink(sink)
         } catch (e: Exception) {
             Log.w(TAG, "addVideoSink failed", e)
+        }
+    }
+
+    /**
+     * Capture a full-resolution still photo by briefly pausing the WebRTC capturer,
+     * taking a high-quality shot via CameraX [ImageCapture], then resuming the stream.
+     *
+     * The stream pauses for ~1 second. [onDone] is called on a background thread.
+     */
+    fun takePicture(outputFile: File, onDone: (success: Boolean) -> Unit) {
+        val capturer = videoCapturer ?: run {
+            Log.w(TAG, "takePicture: no active capturer")
+            onDone(false)
+            return
+        }
+        val mainHandler = Handler(Looper.getMainLooper())
+
+        executor.execute {
+            Log.i(TAG, "takePicture: pausing WebRTC capturer for still capture")
+            try { capturer.stopCapture() } catch (e: Exception) { Log.w(TAG, "stopCapture before still", e) }
+            Thread.sleep(600)
+
+            mainHandler.post {
+                val imageCapture = ImageCapture.Builder()
+                    .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                    .build()
+                val selector = if (isFrontCameraActive) CameraSelector.DEFAULT_FRONT_CAMERA
+                               else CameraSelector.DEFAULT_BACK_CAMERA
+
+                fun resumeStream() {
+                    try { cameraProvider.unbindAll() } catch (e: Exception) { Log.w(TAG, "unbindAll after still", e) }
+                    executor.execute {
+                        Thread.sleep(300)
+                        try {
+                            capturer.startCapture(1920, 1080, 30)
+                            Log.i(TAG, "takePicture: WebRTC capturer resumed")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "takePicture: failed to resume capturer", e)
+                        }
+                    }
+                }
+
+                try {
+                    cameraProvider.bindToLifecycle(lifecycleOwner, selector, imageCapture)
+                    val opts = ImageCapture.OutputFileOptions.Builder(outputFile).build()
+                    imageCapture.takePicture(
+                        opts,
+                        Executors.newSingleThreadExecutor(),
+                        object : ImageCapture.OnImageSavedCallback {
+                            override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                                Log.i(TAG, "takePicture: saved ${outputFile.length()} bytes")
+                                mainHandler.post { resumeStream() }
+                                onDone(true)
+                            }
+                            override fun onError(exc: ImageCaptureException) {
+                                Log.e(TAG, "takePicture: ImageCapture failed", exc)
+                                mainHandler.post { resumeStream() }
+                                onDone(false)
+                            }
+                        }
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "takePicture: bindToLifecycle failed", e)
+                    resumeStream()
+                    onDone(false)
+                }
+            }
         }
     }
 

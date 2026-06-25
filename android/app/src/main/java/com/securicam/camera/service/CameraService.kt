@@ -27,7 +27,6 @@ import com.securicam.camera.R
 import com.securicam.camera.SecuricamApp
 import com.securicam.camera.ui.MainActivity
 import com.securicam.camera.webrtc.LensCatalog
-import com.securicam.camera.webrtc.PhotoCapturer
 import com.securicam.camera.webrtc.VideoRecorder
 import com.securicam.camera.webrtc.WebRtcClient
 import com.securicam.camera.api.SignalingClient
@@ -105,7 +104,7 @@ class CameraService : LifecycleService() {
     private val signalingConnectMutex = Mutex()
     private var lastRenegotiationAt: Long = 0L
     private var activeRecorder: VideoRecorder? = null
-    private var activePhotoCapturer: PhotoCapturer? = null
+    private var isCapturingPhoto: Boolean = false
 
     var isStreaming: Boolean = false
         private set
@@ -566,48 +565,39 @@ class CameraService : LifecycleService() {
     }
 
     private fun capturePhoto() {
-        Log.d(TAG, "Capturing photo...")
-        val client = webRtcClient
-        if (client == null) {
+        Log.d(TAG, "Capturing photo (full-resolution via ImageCapture)...")
+        val client = webRtcClient ?: run {
             Log.w(TAG, "capturePhoto: WebRTC client not initialized; ignoring")
             return
         }
-        if (activePhotoCapturer != null) {
+        if (isCapturingPhoto) {
             Log.d(TAG, "capturePhoto: already in progress")
             return
         }
+        isCapturingPhoto = true
 
         val outDir = File(filesDir, "captures").apply { mkdirs() }
         val photoFile = File(outDir, "photo_${System.currentTimeMillis()}.jpg")
 
-        val capturer = PhotoCapturer(
-            onPhoto = { jpegBytes, _, _ ->
-                serviceScope.launch {
+        client.takePicture(photoFile) { success ->
+            serviceScope.launch {
+                isCapturingPhoto = false
+                if (success && photoFile.exists() && photoFile.length() > 0) {
                     try {
-                        photoFile.writeBytes(jpegBytes)
                         val ok = signalingClient?.uploadCapture(
                             type = "photo",
                             file = photoFile
                         ) ?: false
                         Log.i(TAG, "Photo upload ${if (ok) "OK" else "FAILED"} (${photoFile.length()} bytes)")
                     } catch (e: Exception) {
-                        Log.e(TAG, "Failed to save/upload photo", e)
-                    } finally {
-                        photoFile.delete()
-                        activePhotoCapturer?.let { client.removeVideoSink(it) }
-                        activePhotoCapturer = null
+                        Log.e(TAG, "Failed to upload photo", e)
                     }
+                } else {
+                    Log.w(TAG, "Still capture failed or produced empty file")
                 }
-            },
-            onError = { error ->
-                Log.e(TAG, "Photo capture error", error)
-                activePhotoCapturer?.let { client.removeVideoSink(it) }
-                activePhotoCapturer = null
+                photoFile.delete()
             }
-        )
-
-        activePhotoCapturer = capturer
-        client.addVideoSink(capturer)
+        }
     }
 
     private fun startRecording() {

@@ -12,6 +12,7 @@ use App\Events\VideoRecordingStart;
 use App\Events\VideoRecordingStop;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 class CaptureController extends Controller
@@ -212,14 +213,23 @@ class CaptureController extends Controller
     private function generatePhotoThumbnail(string $sourcePath, string $storageDir): ?string
     {
         try {
-            [$origW, $origH, $type] = getimagesize($sourcePath);
+            $info = getimagesize($sourcePath);
+            if (!$info) {
+                Log::error('Thumbnail: getimagesize failed', ['path' => $sourcePath, 'exists' => file_exists($sourcePath)]);
+                return null;
+            }
+            [$origW, $origH, $type] = $info;
+
             $src = match ($type) {
                 IMAGETYPE_JPEG => imagecreatefromjpeg($sourcePath),
                 IMAGETYPE_PNG  => imagecreatefrompng($sourcePath),
                 IMAGETYPE_WEBP => imagecreatefromwebp($sourcePath),
                 default        => null,
             };
-            if (!$src) return null;
+            if (!$src) {
+                Log::error('Thumbnail: unsupported image type', ['type' => $type, 'path' => $sourcePath]);
+                return null;
+            }
 
             $maxW = 320;
             $ratio = min($maxW / $origW, $maxW / $origH);
@@ -230,15 +240,16 @@ class CaptureController extends Controller
             imagecopyresampled($thumb, $src, 0, 0, 0, 0, $thumbW, $thumbH, $origW, $origH);
             imagedestroy($src);
 
+            Storage::disk('public')->makeDirectory($storageDir);
             $filename = $storageDir . '/' . \Illuminate\Support\Str::random(40) . '.jpg';
             $fullPath = Storage::disk('public')->path($filename);
 
-            Storage::disk('public')->makeDirectory($storageDir);
             imagejpeg($thumb, $fullPath, 80);
             imagedestroy($thumb);
 
             return $filename;
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            Log::error('Thumbnail generation failed', ['error' => $e->getMessage(), 'path' => $sourcePath]);
             return null;
         }
     }
