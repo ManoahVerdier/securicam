@@ -177,12 +177,17 @@ class CaptureController extends Controller
             'public'
         );
 
-        // Store thumbnail if provided
+        // Use provided thumbnail or generate one for photos
         $thumbnailPath = null;
         if ($request->hasFile('thumbnail')) {
             $thumbnailPath = $request->file('thumbnail')->store(
                 "captures/{$camera->id}/thumbnails",
                 'public'
+            );
+        } elseif ($validated['type'] === 'photo') {
+            $thumbnailPath = $this->generatePhotoThumbnail(
+                $request->file('file')->getRealPath(),
+                "captures/{$camera->id}/thumbnails"
             );
         }
 
@@ -202,6 +207,40 @@ class CaptureController extends Controller
             'message' => 'Capture stored successfully',
             'capture' => $capture,
         ], 201);
+    }
+
+    private function generatePhotoThumbnail(string $sourcePath, string $storageDir): ?string
+    {
+        try {
+            [$origW, $origH, $type] = getimagesize($sourcePath);
+            $src = match ($type) {
+                IMAGETYPE_JPEG => imagecreatefromjpeg($sourcePath),
+                IMAGETYPE_PNG  => imagecreatefrompng($sourcePath),
+                IMAGETYPE_WEBP => imagecreatefromwebp($sourcePath),
+                default        => null,
+            };
+            if (!$src) return null;
+
+            $maxW = 320;
+            $ratio = min($maxW / $origW, $maxW / $origH);
+            $thumbW = (int) round($origW * $ratio);
+            $thumbH = (int) round($origH * $ratio);
+
+            $thumb = imagecreatetruecolor($thumbW, $thumbH);
+            imagecopyresampled($thumb, $src, 0, 0, 0, 0, $thumbW, $thumbH, $origW, $origH);
+            imagedestroy($src);
+
+            $filename = $storageDir . '/' . \Illuminate\Support\Str::random(40) . '.jpg';
+            $fullPath = Storage::disk('public')->path($filename);
+
+            Storage::disk('public')->makeDirectory($storageDir);
+            imagejpeg($thumb, $fullPath, 80);
+            imagedestroy($thumb);
+
+            return $filename;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**
