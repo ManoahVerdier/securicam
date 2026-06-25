@@ -25,6 +25,8 @@ class Capture extends Model
         'captured_at',
     ];
 
+    protected $appends = ['file_url', 'thumbnail_url'];
+
     /**
      * Get the attributes that should be cast.
      *

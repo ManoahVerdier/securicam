@@ -38,8 +38,10 @@ export class GalleryComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   ngOnChanges(changes: SimpleChanges): void {
-    if ((changes['camera'] && !changes['camera'].firstChange) ||
-        (changes['filterType'] && !changes['filterType'].firstChange)) {
+    const cameraIdChanged = changes['camera'] && !changes['camera'].firstChange &&
+      changes['camera'].previousValue?.id !== changes['camera'].currentValue?.id;
+    const filterChanged = changes['filterType'] && !changes['filterType'].firstChange;
+    if (cameraIdChanged || filterChanged) {
       this.loadCaptures();
     }
   }
