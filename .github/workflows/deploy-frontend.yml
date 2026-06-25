@@ -1,0 +1,57 @@
+name: Deploy Frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - 'docker/frontend/**'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Inject runtime config
+        working-directory: frontend
+        run: |
+          sed -i \
+            -e "s|__PUBLIC_HOST__|${{ secrets.PUBLIC_HOST }}|g" \
+            -e "s|__TURN_HOST__|${{ secrets.TURN_HOST }}|g" \
+            -e "s|__TURN_USER__|${{ secrets.TURN_USER }}|g" \
+            -e "s|__TURN_PASSWORD__|${{ secrets.TURN_PASSWORD }}|g" \
+            -e "s|__REVERB_APP_KEY__|securicam-app-key|g" \
+            src/environments/environment.prod.ts
+
+      - name: Build Angular SPA
+        working-directory: frontend
+        run: npx ng build --configuration production
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy to VPS
+        run: |
+          rsync -az --delete \
+            -e "ssh -i ~/.ssh/id_ed25519" \
+            frontend/dist/securicam-viewer/browser/ \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/var/www/securicam-spa/
