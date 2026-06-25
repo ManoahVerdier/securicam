@@ -651,18 +651,23 @@ class CameraService : LifecycleService() {
         if (activeBurstCapturer != null) { Log.d(TAG, "startBurstClassic: burst already active"); return }
 
         val outDir = File(filesDir, "captures").apply { mkdirs() }
+        val burstId = java.util.UUID.randomUUID().toString()
         var uploadedCount = 0
 
         val burstCapturer = BurstPhotoCapturer(
             totalCount = count,
             onEachPhoto = { jpegBytes, index ->
                 serviceScope.launch {
-                    val photoFile = File(outDir, "burst_${System.currentTimeMillis()}_${index}.jpg")
+                    val photoFile = File(outDir, "burst_${burstId}_${index}.jpg")
                     try {
                         photoFile.writeBytes(jpegBytes)
-                        val ok = signalingClient?.uploadCapture(type = "photo", file = photoFile) ?: false
+                        val ok = signalingClient?.uploadCapture(
+                            type = "photo",
+                            file = photoFile,
+                            burstId = burstId
+                        ) ?: false
                         if (ok) uploadedCount++
-                        Log.d(TAG, "Burst frame $index upload ${if (ok) "OK" else "FAILED"}")
+                        Log.d(TAG, "Burst[$burstId] frame $index ${if (ok) "OK" else "FAILED"}")
                     } catch (e: Exception) {
                         Log.e(TAG, "Burst frame $index upload error", e)
                     } finally {
@@ -672,7 +677,7 @@ class CameraService : LifecycleService() {
             },
             onComplete = {
                 serviceScope.launch {
-                    Log.i(TAG, "Burst complete: $uploadedCount/$count uploaded")
+                    Log.i(TAG, "Burst[$burstId] complete: $uploadedCount/$count uploaded")
                     activeBurstCapturer?.let { client.removeVideoSink(it) }
                     activeBurstCapturer = null
                 }

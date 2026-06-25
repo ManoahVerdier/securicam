@@ -250,12 +250,13 @@ class CaptureController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'camera_id' => ['required', 'exists:cameras,id'],
-            'type' => ['required', 'string', 'in:photo,video'],
-            'file' => ['required', 'file', 'max:102400'], // 100MB max
-            'thumbnail' => ['sometimes', 'file', 'image', 'max:1024'], // 1MB max for thumbnail
-            'duration' => ['sometimes', 'integer', 'min:0'],
-            'captured_at' => ['sometimes', 'date'],
+            'camera_id'  => ['required', 'exists:cameras,id'],
+            'type'       => ['required', 'string', 'in:photo,video'],
+            'burst_id'   => ['sometimes', 'nullable', 'string', 'max:36'],
+            'file'       => ['required', 'file', 'max:102400'], // 100MB max
+            'thumbnail'  => ['sometimes', 'file', 'image', 'max:1024'],
+            'duration'   => ['sometimes', 'integer', 'min:0'],
+            'captured_at'=> ['sometimes', 'date'],
         ]);
 
         $camera = Camera::findOrFail($validated['camera_id']);
@@ -282,12 +283,13 @@ class CaptureController extends Controller
         }
 
         $capture = $camera->captures()->create([
-            'type' => $validated['type'],
-            'file_path' => $filePath,
+            'type'           => $validated['type'],
+            'burst_id'       => $validated['burst_id'] ?? null,
+            'file_path'      => $filePath,
             'thumbnail_path' => $thumbnailPath,
-            'duration' => $validated['duration'] ?? null,
-            'file_size' => $request->file('file')->getSize(),
-            'captured_at' => $validated['captured_at'] ?? now(),
+            'duration'       => $validated['duration'] ?? null,
+            'file_size'      => $request->file('file')->getSize(),
+            'captured_at'    => $validated['captured_at'] ?? now(),
         ]);
 
         // Notify the viewer's gallery in real time so it doesn't have to poll.

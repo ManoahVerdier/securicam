@@ -12,31 +12,68 @@
   </div>
 
   <div class="captures-grid" *ngIf="!isLoading && !hasError">
-    <div
-      class="capture-item"
-      *ngFor="let capture of captures"
-      (click)="openCapture(capture)"
-    >
-      <div class="thumbnail">
-        <img
-          *ngIf="capture.thumbnail_url"
-          [src]="capture.thumbnail_url"
-          [alt]="capture.type"
-        />
-        <div class="placeholder" *ngIf="!capture.thumbnail_url">
-          <span *ngIf="capture.type === 'photo'">📷</span>
-          <span *ngIf="capture.type === 'video'">🎬</span>
+    <ng-container *ngFor="let item of galleryItems">
+
+      <!-- Capture classique -->
+      <div
+        *ngIf="item.kind === 'capture'"
+        class="capture-item"
+        (click)="openCapture(item.capture)"
+      >
+        <div class="thumbnail">
+          <img *ngIf="item.capture.thumbnail_url" [src]="item.capture.thumbnail_url" [alt]="item.capture.type" />
+          <div class="placeholder" *ngIf="!item.capture.thumbnail_url">
+            <span *ngIf="item.capture.type === 'photo'">📷</span>
+            <span *ngIf="item.capture.type === 'video'">🎬</span>
+          </div>
+          <span class="badge video" *ngIf="item.capture.type === 'video'">
+            {{ item.capture.duration ? formatDuration(item.capture.duration) : 'Vidéo' }}
+          </span>
         </div>
-        <span class="badge video" *ngIf="capture.type === 'video'">
-          {{ capture.duration ? formatDuration(capture.duration) : 'Vidéo' }}
-        </span>
+        <div class="info">
+          <span class="date">{{ formatDate(item.capture.captured_at) }}</span>
+          <span class="size" *ngIf="item.capture.file_size">{{ formatFileSize(item.capture.file_size) }}</span>
+        </div>
+        <button class="delete-btn" (click)="deleteCapture(item.capture, $event)">🗑️</button>
       </div>
-      <div class="info">
-        <span class="date">{{ formatDate(capture.captured_at) }}</span>
-        <span class="size" *ngIf="capture.file_size">{{ formatFileSize(capture.file_size) }}</span>
-      </div>
-      <button class="delete-btn" (click)="deleteCapture(capture, $event)">🗑️</button>
-    </div>
+
+      <!-- Dossier de rafale -->
+      <ng-container *ngIf="item.kind === 'burst'">
+        <div
+          class="burst-folder"
+          [class.expanded]="isBurstExpanded(item.group.burst_id)"
+          (click)="toggleBurst(item.group.burst_id)"
+        >
+          <div class="thumbnail">
+            <img *ngIf="item.group.cover.thumbnail_url" [src]="item.group.cover.thumbnail_url" alt="Rafale" />
+            <div class="placeholder" *ngIf="!item.group.cover.thumbnail_url">📷</div>
+            <span class="badge burst">Rafale · {{ item.group.photos.length }}</span>
+          </div>
+          <div class="info">
+            <span class="date">{{ formatDate(item.group.cover.captured_at) }}</span>
+            <span class="expand-icon">{{ isBurstExpanded(item.group.burst_id) ? '▲' : '▼' }}</span>
+          </div>
+        </div>
+
+        <ng-container *ngIf="isBurstExpanded(item.group.burst_id)">
+          <div
+            class="capture-item burst-child"
+            *ngFor="let photo of item.group.photos"
+            (click)="openCapture(photo)"
+          >
+            <div class="thumbnail">
+              <img *ngIf="photo.thumbnail_url" [src]="photo.thumbnail_url" alt="Rafale" />
+              <div class="placeholder" *ngIf="!photo.thumbnail_url">📷</div>
+            </div>
+            <div class="info">
+              <span class="size" *ngIf="photo.file_size">{{ formatFileSize(photo.file_size) }}</span>
+            </div>
+            <button class="delete-btn" (click)="deleteCapture(photo, $event)">🗑️</button>
+          </div>
+        </ng-container>
+      </ng-container>
+
+    </ng-container>
   </div>
 
   <div class="empty" *ngIf="!isLoading && !hasError && captures.length === 0">
@@ -51,24 +88,12 @@
     Charger plus
   </button>
 
-  <!-- Capture Viewer Modal -->
+  <!-- Viewer Modal -->
   <div class="viewer-modal" *ngIf="selectedCapture" (click)="closeViewer()">
     <div class="viewer-content" (click)="$event.stopPropagation()">
       <button class="close-btn" (click)="closeViewer()">✕</button>
-
-      <img
-        *ngIf="selectedCapture.type === 'photo'"
-        [src]="selectedCapture.file_url"
-        alt="Capture"
-      />
-
-      <video
-        *ngIf="selectedCapture.type === 'video'"
-        [src]="selectedCapture.file_url"
-        controls
-        autoplay
-      ></video>
-
+      <img *ngIf="selectedCapture.type === 'photo'" [src]="selectedCapture.file_url" alt="Capture" />
+      <video *ngIf="selectedCapture.type === 'video'" [src]="selectedCapture.file_url" controls autoplay></video>
       <div class="viewer-info">
         <p>{{ formatDate(selectedCapture.captured_at) }}</p>
         <p *ngIf="selectedCapture.file_size">{{ formatFileSize(selectedCapture.file_size) }}</p>

@@ -180,8 +180,8 @@ class SignalingClient(
     suspend fun notifyHeartbeat(availableLenses: List<Map<String, String>> = emptyList(), activeLens: String? = null) =
         http.notifyHeartbeat(availableLenses, activeLens)
     suspend fun notifyDisconnect() = http.notifyDisconnect()
-    suspend fun uploadCapture(type: String, file: File, durationSeconds: Long? = null) =
-        http.uploadCapture(type, file, durationSeconds)
+    suspend fun uploadCapture(type: String, file: File, durationSeconds: Long? = null, burstId: String? = null) =
+        http.uploadCapture(type, file, durationSeconds, burstId)
 
     // -------------------------------------------------------------------------
     // WebSocket message routing

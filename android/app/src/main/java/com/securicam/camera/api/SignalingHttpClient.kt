@@ -112,7 +112,8 @@ class SignalingHttpClient(
     suspend fun uploadCapture(
         type: String,
         file: File,
-        durationSeconds: Long? = null
+        durationSeconds: Long? = null,
+        burstId: String? = null
     ): Boolean = withContext(Dispatchers.IO) {
         val url = buildApiUrl("/captures/upload") ?: return@withContext logMissingUrl("uploadCapture")
 
@@ -128,6 +129,7 @@ class SignalingHttpClient(
             .addFormDataPart("type", type)
             .addFormDataPart("file", file.name, file.asRequestBody(mediaType))
             .also { if (durationSeconds != null) it.addFormDataPart("duration", durationSeconds.toString()) }
+            .also { if (burstId != null) it.addFormDataPart("burst_id", burstId) }
             .build()
 
         val request = Request.Builder()

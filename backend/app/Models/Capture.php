@@ -18,6 +18,7 @@ class Capture extends Model
     protected $fillable = [
         'camera_id',
         'type',
+        'burst_id',
         'file_path',
         'thumbnail_path',
         'duration',

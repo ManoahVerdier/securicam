@@ -2,6 +2,7 @@ export interface Capture {
   id: number;
   camera_id: number;
   type: CaptureType;
+  burst_id?: string | null;
   file_path: string;
   thumbnail_path?: string;
   duration?: number;
@@ -11,6 +12,13 @@ export interface Capture {
   updated_at: string;
   file_url?: string;
   thumbnail_url?: string;
+}
+
+export interface BurstGroup {
+  burst_id: string;
+  photos: Capture[];
+  /** First photo of the burst, used as cover thumbnail */
+  cover: Capture;
 }
 
 export type CaptureType = 'photo' | 'video';

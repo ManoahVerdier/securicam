@@ -1,7 +1,7 @@
 import { Component, Input, OnDestroy, OnInit, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Subscription } from 'rxjs';
-import { Camera, Capture, CaptureListResponse } from '../../models';
+import { Camera, Capture, BurstGroup, CaptureListResponse } from '../../models';
 import { CaptureService, SignalingService } from '../../services';
 
 @Component({
@@ -13,9 +13,7 @@ import { CaptureService, SignalingService } from '../../services';
 })
 export class GalleryComponent implements OnInit, OnChanges, OnDestroy {
   @Input({ required: true }) camera!: Camera;
-  /** Optional filter — when set, only that type is fetched and shown. */
   @Input() filterType?: 'photo' | 'video';
-  /** Optional title override (defaults to "Captures"). */
   @Input() title?: string;
 
   captures: Capture[] = [];
@@ -24,6 +22,7 @@ export class GalleryComponent implements OnInit, OnChanges, OnDestroy {
   currentPage = 1;
   totalPages = 1;
   selectedCapture: Capture | null = null;
+  expandedBursts = new Set<string>();
 
   private liveSub?: Subscription;
 
@@ -50,19 +49,50 @@ export class GalleryComponent implements OnInit, OnChanges, OnDestroy {
     this.liveSub?.unsubscribe();
   }
 
-  /** Push newly uploaded captures to the top of the grid in real time. */
+  /** Flat list of captures split into standalone items and burst groups */
+  get galleryItems(): Array<{ kind: 'capture'; capture: Capture } | { kind: 'burst'; group: BurstGroup }> {
+    const items: Array<{ kind: 'capture'; capture: Capture } | { kind: 'burst'; group: BurstGroup }> = [];
+    const burstMap = new Map<string, Capture[]>();
+
+    for (const c of this.captures) {
+      if (c.burst_id) {
+        const bucket = burstMap.get(c.burst_id) ?? [];
+        bucket.push(c);
+        burstMap.set(c.burst_id, bucket);
+      }
+    }
+
+    const seen = new Set<string>();
+    for (const c of this.captures) {
+      if (!c.burst_id) {
+        items.push({ kind: 'capture', capture: c });
+      } else if (!seen.has(c.burst_id)) {
+        seen.add(c.burst_id);
+        const photos = burstMap.get(c.burst_id)!;
+        items.push({ kind: 'burst', group: { burst_id: c.burst_id, photos, cover: photos[0] } });
+      }
+    }
+
+    return items;
+  }
+
+  toggleBurst(burstId: string): void {
+    if (this.expandedBursts.has(burstId)) {
+      this.expandedBursts.delete(burstId);
+    } else {
+      this.expandedBursts.add(burstId);
+    }
+  }
+
+  isBurstExpanded(burstId: string): boolean {
+    return this.expandedBursts.has(burstId);
+  }
+
   private subscribeToLiveCaptures(): void {
     this.liveSub = this.signaling.captureCreated$.subscribe(({ cameraId, capture }) => {
-      if (cameraId !== this.camera.id) {
-        return;
-      }
-      if (this.filterType && capture.type !== this.filterType) {
-        return;
-      }
-      // Avoid duplicates if the API call already returned this capture.
-      if (this.captures.some(c => c.id === capture.id)) {
-        return;
-      }
+      if (cameraId !== this.camera.id) return;
+      if (this.filterType && capture.type !== this.filterType) return;
+      if (this.captures.some(c => c.id === capture.id)) return;
       this.captures = [capture, ...this.captures];
     });
   }
@@ -103,32 +133,21 @@ export class GalleryComponent implements OnInit, OnChanges, OnDestroy {
 
   deleteCapture(capture: Capture, event: Event): void {
     event.stopPropagation();
-
-    if (!confirm('Êtes-vous sûr de vouloir supprimer cette capture ?')) {
-      return;
-    }
+    if (!confirm('Êtes-vous sûr de vouloir supprimer cette capture ?')) return;
 
     this.captureService.deleteCapture(this.camera.id, capture.id).subscribe({
       next: () => {
         this.captures = this.captures.filter(c => c.id !== capture.id);
-        if (this.selectedCapture?.id === capture.id) {
-          this.selectedCapture = null;
-        }
+        if (this.selectedCapture?.id === capture.id) this.selectedCapture = null;
       },
-      error: () => {
-        alert('Erreur lors de la suppression');
-      }
+      error: () => alert('Erreur lors de la suppression')
     });
   }
 
   formatDate(dateString: string): string {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('fr-FR', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
+    return new Date(dateString).toLocaleDateString('fr-FR', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit'
     });
   }
 
