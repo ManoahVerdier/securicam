@@ -19,9 +19,11 @@
       margin-bottom: 32px;
 
       .icon {
-        font-size: 48px;
+        width: 72px;
+        height: 72px;
+        border-radius: 16px;
         display: block;
-        margin-bottom: 12px;
+        margin: 0 auto 12px;
       }
 
       h1 {
